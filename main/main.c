@@ -14,6 +14,7 @@
 #include "esp_bt_main.h"
 #include "esp_gatt_common_api.h"
 #include "esp_bt_device.h"
+#include "esp_mac.h"
 
 #define GATTC_TAG "GATTC_CLIENT"
 #define REMOTE_DEVICE_NAME "MyBLEDevice"
@@ -21,7 +22,7 @@
 #define MAX_RETRY_COUNT 3
 #define PROFILE_NUM 1
 #define PROFILE_A_APP_ID 0
-#define MAIN_RUNTIME_SECONDS 300 // Run time for main function before exiting
+#define MAIN_RUNTIME_SECONDS 15 // Run time for main function before exiting
 
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
 static bool device_found = false;
@@ -91,7 +92,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
                 {
                     esp_ble_gap_stop_scanning();
                 }
-                esp_ble_gattc_open(gl_gattc_if, param->scan_rst.bda, param->scan_rst.ble_addr_type, true);
+                esp_ble_gattc_open(gl_gattc_if, param->scan_rst.bda, BLE_ADDR_TYPE_PUBLIC, true);
             }
         }
         break;
@@ -125,6 +126,8 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
             // Print the values of gl_gattc_if and conn_id before calling service discovery
             ESP_LOGI(GATTC_TAG, "gl_gattc_if: %d, conn_id: %d", gl_gattc_if, conn_id);
 
+            esp_ble_gattc_search_service(gl_gattc_if, conn_id, NULL);
+
             // if (is_paired)
             // {
             //     ESP_LOGI(GATTC_TAG, "We can start again service discovery...");
@@ -154,6 +157,16 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
         ESP_LOGI(GATTC_TAG, "Numeric Comparison");
         // esp_ble_confirm_reply(param->ble_security_req.bd_addr, true);
         break;
+    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT: {
+        esp_ble_gap_conn_params_t *params = &param->update_conn_params;
+
+        ESP_LOGI(GATTC_TAG, "Connection parameters updated:");
+        ESP_LOGI(GATTC_TAG, "Interval: %d", params->interval_min);  // or int_max
+        ESP_LOGI(GATTC_TAG, "Latency: %d", params->latency);
+        ESP_LOGI(GATTC_TAG, "Timeout: %d (%.1f seconds)", params->supervision_timeout, params->supervision_timeout * 0.01);
+
+        break;
+}
     default:
         break;
     }
@@ -174,12 +187,45 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         conn_id = p_data->connect.conn_id;
         ESP_LOGI(GATTC_TAG, "ESP_GATTC_CONNECT_EVT conn_id %d, if %d", conn_id, gattc_if);
         esp_ble_gattc_send_mtu_req(gattc_if, conn_id);
-        // Start security process
-        esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT_MITM);
+
         
+        
+        // Tested for now
+        esp_err_t ret = esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
+        if (ret != ESP_OK) {
+            ESP_LOGE(GATTC_TAG, "Failed to set encryption, err = 0x%x", ret);
+        }
+
+
+
         memcpy(current_remote_bda, param->connect.remote_bda, sizeof(esp_bd_addr_t));
 
+
         connection_timestamp = esp_log_timestamp();
+
+
+        esp_ble_gattc_cb_param_t *conn = param;
+
+        uint16_t interval = conn->connect.conn_params.interval;   // in units of 1.25ms
+        uint16_t latency  = conn->connect.conn_params.latency;
+        uint16_t max_timeout = ((1 + latency) * interval * 2) + 1;  // minimum valid timeout in 10ms units
+
+        ESP_LOGI(GATTC_TAG, "Connected to peripheral");
+        ESP_LOGI(GATTC_TAG, "Interval: %d (%.2f ms)", interval, interval * 1.25);
+        ESP_LOGI(GATTC_TAG, "Latency: %d", latency);
+        ESP_LOGI(GATTC_TAG, "Max safe supervision timeout: %d (%.1f seconds)",
+                max_timeout, max_timeout * 0.01);
+
+        esp_ble_conn_update_params_t update_params = {
+            .min_int = 0x10,  // 20ms
+            .max_int = 0x20,  // 40ms
+            .latency = 0,
+            .timeout = 3000,  // 30 seconds (in 10ms units)
+        };
+        memcpy(update_params.bda, conn->connect.remote_bda, sizeof(esp_bd_addr_t));
+        esp_ble_gap_update_conn_params(&update_params);
+
+
         break;
     case ESP_GATTC_OPEN_EVT:
         if (param->open.status == ESP_GATT_OK)
@@ -689,16 +735,15 @@ void app_main(void)
         {
             ESP_LOGI(GATTC_TAG, "We are connected...");
 
-            if (is_paired && !service_discovery_started)
-            {
-                uint32_t elapsed_time = esp_log_timestamp() - connection_timestamp;
-                if (elapsed_time >= 1000) // ✅ Wait 1 second after connection
-                {
-                    ESP_LOGI(GATTC_TAG, "Calling esp_ble_gattc_search_service...");
-                    esp_ble_gattc_search_service(gl_gattc_if, conn_id, NULL);
-                    service_discovery_started = true; // ✅ Ensure it runs only once
-                }
-            }
+            // if (is_paired && !service_discovery_started)
+            // {
+            //     uint32_t elapsed_time = esp_log_timestamp() - connection_timestamp;
+            //     if (elapsed_time >= 1000) // ✅ Wait 1 second after connection
+            //     {
+            //         ESP_LOGI(GATTC_TAG, "Calling esp_ble_gattc_search_service...");
+            //         service_discovery_started = true; // ✅ Ensure it runs only once
+            //     }
+            // }
         }
     }
 
