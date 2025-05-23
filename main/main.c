@@ -33,13 +33,18 @@ static void gattc_event_handler(esp_gattc_cb_event_t event,
     case ESP_GATTC_CONNECT_EVT: {
         ESP_LOGI(TAG, "ESP_GATTC_CONNECT_EVT: connected to remote device");
         ESP_LOGI(TAG, "Remote BDA: %02x:%02x:%02x:%02x:%02x:%02x",
-                 param->connect.remote_bda[0],
-                 param->connect.remote_bda[1],
-                 param->connect.remote_bda[2],
-                 param->connect.remote_bda[3],
-                 param->connect.remote_bda[4],
-                 param->connect.remote_bda[5]);
-        // If needed, discover services here or do other GATT procedures.
+                param->connect.remote_bda[0],
+                param->connect.remote_bda[1],
+                param->connect.remote_bda[2],
+                param->connect.remote_bda[3],
+                param->connect.remote_bda[4],
+                param->connect.remote_bda[5]);
+
+        // Try to enforce encryption using the previously bonded keys
+        esp_err_t ret = esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to set encryption, err = 0x%x", ret);
+        }
         break;
     }
 
@@ -48,14 +53,14 @@ static void gattc_event_handler(esp_gattc_cb_event_t event,
             ESP_LOGI(TAG, "ESP_GATTC_OPEN_EVT: connection opened!");
         } else {
             ESP_LOGE(TAG, "ESP_GATTC_OPEN_EVT: connection failed, status=%d",
-                     param->open.status);
+                    param->open.status);
         }
         break;
     }
 
     case ESP_GATTC_DISCONNECT_EVT: {
         ESP_LOGW(TAG, "ESP_GATTC_DISCONNECT_EVT, reason=0x%x",
-                 param->disconnect.reason);
+                param->disconnect.reason);
         break;
     }
 
@@ -102,6 +107,10 @@ static void ble_init_gattc(void)
         ESP_LOGE(TAG, "%s enable bluedroid failed\n", __func__);
         return;
     }
+
+    esp_ble_auth_req_t auth_req = ESP_LE_AUTH_BOND;
+
+    esp_ble_gap_set_security_param(ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req, sizeof(uint8_t));
 
     // 6. Register the GATT Client callback
     ret = esp_ble_gattc_register_callback(gattc_event_handler);
@@ -164,9 +173,6 @@ static void connect_to_first_bonded(void *pvParam)
              remote_bda[3], remote_bda[4], remote_bda[5]);
 
     // 4. Use the GATT Client interface to open a direct connection
-    //    Make sure you provide the correct address type. If your device
-    //    is using public addressing, use BLE_ADDR_TYPE_PUBLIC.
-    //    The last parameter is direct_conn=true, so we skip scanning and go directly.
     if (gattc_if != ESP_GATT_IF_NONE) {
         ret = esp_ble_gattc_open(gattc_if, remote_bda, BLE_ADDR_TYPE_PUBLIC, true);
         if (ret) {
