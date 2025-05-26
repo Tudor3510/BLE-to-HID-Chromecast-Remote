@@ -15,6 +15,7 @@
 #include "esp_gatt_common_api.h"
 #include "esp_bt_device.h"
 #include "esp_mac.h"
+#include "esp_bt_defs.h"
 
 #define GATTC_TAG "GATTC_CLIENT"
 #define REMOTE_DEVICE_NAME "MyBLEDevice"
@@ -23,6 +24,9 @@
 #define PROFILE_NUM 1
 #define PROFILE_A_APP_ID 0
 #define MAIN_RUNTIME_SECONDS 15 // Run time for main function before exiting
+
+// For convenience, define the numeric code for connectable directed adv:
+#define ADV_DIRECT_IND 0x01
 
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
 static bool device_found = false;
@@ -82,7 +86,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     case ESP_GAP_BLE_SCAN_RESULT_EVT:
         if (param->scan_rst.search_evt == ESP_GAP_SEARCH_INQ_RES_EVT)
         {
-            if (memcmp(param->scan_rst.bda, target_device_addr, sizeof(esp_bd_addr_t)) == 0)
+            if (memcmp(param->scan_rst.bda, target_device_addr, sizeof(esp_bd_addr_t)) == 0 && param->scan_rst.ble_evt_type == ADV_DIRECT_IND)
             {
                 ESP_LOGI(GATTC_TAG, "Found target device. Address: %02x:%02x:%02x:%02x:%02x:%02x",
                         param->scan_rst.bda[0], param->scan_rst.bda[1], param->scan_rst.bda[2],
