@@ -134,10 +134,11 @@ static void app_send_hid_demo(void)
 {
     // Keyboard output: Send key 'a/A' pressed and released
     ESP_LOGI(TAG, "Sending Keyboard report");
-    uint8_t keycode[6] = {HID_KEY_ARROW_LEFT};
-    tud_hid_keyboard_report(HID_ITF_PROTOCOL_KEYBOARD, KEYBOARD_MODIFIER_LEFTALT, keycode);
+    uint8_t keycode[6] = {HID_KEY_A, 0, 0, 0, 0, 0};
+    tud_hid_keyboard_report(HID_ITF_PROTOCOL_KEYBOARD, 0, keycode);
     vTaskDelay(pdMS_TO_TICKS(10));
-    tud_hid_keyboard_report(HID_ITF_PROTOCOL_KEYBOARD, 0, NULL);
+    uint8_t keycode_release_all[6] = {0, 0, 0, 0, 0, 0};
+    tud_hid_keyboard_report(HID_ITF_PROTOCOL_KEYBOARD, 0, keycode_release_all);
 
     // Mouse output: Move mouse cursor in square trajectory
     ESP_LOGI(TAG, "Sending Mouse report");
