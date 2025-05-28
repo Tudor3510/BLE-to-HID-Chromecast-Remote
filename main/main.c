@@ -16,14 +16,27 @@
 #include "esp_bt_device.h"
 #include "esp_mac.h"
 #include "esp_bt_defs.h"
+#include "tinyusb.h"
+#include "class/hid/hid_device.h"
+#include "driver/gpio.h"
 
 #define GATTC_TAG "GATTC_CLIENT"
+#define TINY_USB_TAG "TINY_USB"
 #define REMOTE_DEVICE_NAME "MyBLEDevice"
 #define SCAN_DURATION_SECONDS 30
 #define MAX_RETRY_COUNT 3
 #define PROFILE_NUM 1
 #define PROFILE_A_APP_ID 0
-#define MAIN_RUNTIME_SECONDS 15 // Run time for main function before exiting
+#define MAIN_RUNTIME_SECONDS 120 // Run time for main function before exiting
+
+#define REMOTE_RELEASE_KEY 0x00
+
+
+/************* TinyUSB descriptors ****************/
+
+#define TUSB_DESC_TOTAL_LEN      (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_DESC_LEN)
+#define HID_ITF_PROTOCOL_CONSUMER 2
+
 
 // For convenience, define the numeric code for connectable directed adv:
 #define ADV_DIRECT_IND 0x01
@@ -43,6 +56,32 @@ static uint8_t target_ir_uuid[ESP_UUID_LEN_128] = {
         0x05, 0x4f, 0x21, 0x5a, 0xc0, 0xbf, 0x43, 0xd3
     };
 
+typedef struct {
+    uint8_t report_id;
+    uint8_t keycode[8];
+    uint8_t length;
+} hid_report_mapper;
+
+static hid_report_mapper remote_map_windows_hid[18] = {
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD & HID_ITF_PROTOCOL_CONSUMER, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},         // pos 00: 
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_A, 0, 0, 0, 0, 0}, .length = 8},                             // pos 01: power
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},                                     // pos 02: 
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_UP, 0, 0, 0, 0, 0}, .length = 8},                      // pos 03: up
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_DOWN, 0, 0, 0, 0, 0}, .length = 8},                    // pos 04: down
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_LEFT, 0, 0, 0, 0, 0}, .length = 8},                    // pos 05: left
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_RIGHT, 0, 0, 0, 0, 0}, .length = 8},                   // pos 06: right
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ENTER, 0, 0, 0, 0, 0}, .length = 8},                         // pos 07: enter
+    {.report_id = HID_ITF_PROTOCOL_CONSUMER, .keycode = {HID_USAGE_CONSUMER_MUTE, 0, 0, 0, 0, 0, 0, 0}, .length = 2},               // pos 08: mute
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},                                     // pos 09: 
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_GUI_LEFT, 0, 0, 0, 0, 0}, .length = 8},                      // pos 10: home
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ESCAPE, 0, 0, 0, 0, 0}, .length = 8},                        // pos 11: back
+    {.report_id = HID_ITF_PROTOCOL_CONSUMER, .keycode = {HID_USAGE_CONSUMER_VOLUME_INCREMENT, 0, 0, 0, 0, 0, 0, 0}, .length = 2},   // pos 12: vol_up
+    {.report_id = HID_ITF_PROTOCOL_CONSUMER, .keycode = {HID_USAGE_CONSUMER_VOLUME_DECREMENT, 0, 0, 0, 0, 0, 0, 0}, .length = 2},   // pos 13: vol_down
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_S, 0, 0, 0, 0, 0}, .length = 8},                             // pos 14: YouTube
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_D, 0, 0, 0, 0, 0}, .length = 8},                             // pos 15: Netflix
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},                                     // pos 16: 
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_F, 0, 0, 0, 0, 0}, .length = 8},                             // pos 17: input
+};
 
 static esp_gattc_char_elem_t charact;
 static esp_gattc_char_elem_t enable_ir_writing;
@@ -55,7 +94,33 @@ static esp_ble_scan_params_t ble_scan_params = {
     .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
     .scan_interval = 0x50,
     .scan_window = 0x30,
-    .scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE};
+    .scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE
+};
+
+const char* hid_string_descriptor[5] = {
+    // array of pointer to string descriptors
+    (char[]){0x09, 0x04},  // 0: is supported language is English (0x0409)
+    "TinyUSB",             // 1: Manufacturer
+    "TinyUSB Device",      // 2: Product
+    "123456",              // 3: Serials, should use chip ID
+    "Example HID interface",  // 4: HID
+};
+
+const uint8_t hid_report_descriptor[] = {
+    TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(HID_ITF_PROTOCOL_KEYBOARD)),
+    TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(HID_ITF_PROTOCOL_CONSUMER))
+};
+
+static const uint8_t hid_configuration_descriptor[] = {
+    // Configuration number, interface count, string index, total length, attribute, power in mA
+    TUD_CONFIG_DESCRIPTOR(1, 1, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
+
+    // Interface number, string index, boot protocol, report descriptor len, EP In address, size & polling interval
+    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(hid_report_descriptor), 0x81, 16, 10),
+};
+
+
+static QueueHandle_t release_button_queue;
 
 static void start_scan(void);
 
@@ -86,7 +151,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     case ESP_GAP_BLE_SCAN_RESULT_EVT:
         if (param->scan_rst.search_evt == ESP_GAP_SEARCH_INQ_RES_EVT)
         {
-            if (memcmp(param->scan_rst.bda, target_device_addr, sizeof(esp_bd_addr_t)) == 0 && param->scan_rst.ble_evt_type == ADV_DIRECT_IND)
+            if (memcmp(param->scan_rst.bda, target_device_addr, sizeof(esp_bd_addr_t)) == 0) //&& param->scan_rst.ble_evt_type == ADV_DIRECT_IND)
             {
                 ESP_LOGI(GATTC_TAG, "Found target device. Address: %02x:%02x:%02x:%02x:%02x:%02x",
                         param->scan_rst.bda[0], param->scan_rst.bda[1], param->scan_rst.bda[2],
@@ -405,10 +470,28 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         {
             ESP_LOGI(GATTC_TAG, "Notification received for handle: %d", param->notify.handle);
             ESP_LOGI(GATTC_TAG, "Notification data: ");
-            for (int i = 0; i < param->notify.value_len; i++)
+            ESP_LOGI(GATTC_TAG, "0x%02x ", param->notify.value[0]);
+
+            ESP_LOGI(TINY_USB_TAG, "Sending Keyboard report");
+            
+            if (param->notify.value[0] == REMOTE_RELEASE_KEY)
             {
-                ESP_LOGI(GATTC_TAG, "0x%02x ", param->notify.value[i]);
+                ESP_LOGI(TINY_USB_TAG, "--Release Key");
+
+                hid_report_mapper hid_report_mapper_copy;
+                xQueueReceive(release_button_queue, &hid_report_mapper_copy, 0);
+                tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
             }
+            else
+            {
+                hid_report_mapper hid_report_mapper_copy = remote_map_windows_hid[param->notify.value[0]];
+                tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
+
+                hid_report_mapper_copy.keycode[0] = 0, hid_report_mapper_copy.keycode[2] = 0;
+                xQueueSend(release_button_queue, &hid_report_mapper_copy, 0);
+            }
+
+            // xQueueSend(hid_queue, &remote_map_windows_hid[param->notify.value[0]], 0); // non-blocking send
         }
         else
         {
@@ -458,119 +541,119 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             current_remote_bda[3], current_remote_bda[4], current_remote_bda[5]);
 
 
-        esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, enable_ir_writing.char_handle, sizeof(en_ir_writing_value), en_ir_writing_value, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Serviciul IR se asteapta sa scriem");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Serviciul IR NU se asteapta sa scriem din cauze unei erori");
-        }
+        // esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, enable_ir_writing.char_handle, sizeof(en_ir_writing_value), en_ir_writing_value, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Serviciul IR se asteapta sa scriem");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Serviciul IR NU se asteapta sa scriem din cauze unei erori");
+        // }
 
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(vol_up_button), vol_up_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Volume up button se asteapta sa primeasca valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Volume up button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(vol_up_button), vol_up_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume up button se asteapta sa primeasca valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume up button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        // }
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(vol_up_val), vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Volume up button a primit valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Volume up button NU a primit valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(vol_up_val), vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume up button a primit valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume up button NU a primit valoarea din cauze unei erori");
+        // }
 
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(vol_down_button), vol_down_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Volume down button se asteapta sa primeasca valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Volume down button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(vol_down_button), vol_down_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume down button se asteapta sa primeasca valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume down button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        // }
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(vol_down_val), vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Volume down button a primit valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Volume down button NU a primit valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(vol_down_val), vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume down button a primit valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Volume down button NU a primit valoarea din cauze unei erori");
+        // }
         
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(pow_button), pow_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Power button se asteapta sa primeasca valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Power button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(pow_button), pow_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Power button se asteapta sa primeasca valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Power button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        // }
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(pow_val), pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Power button a primit valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Power button NU a primit valoarea din cauze unei erori");
-        }
-
-
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(mute_button), mute_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Mute button se asteapta sa primeasca valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Mute button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        }
-
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(mute_val), mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Mute button a primit valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Mute button NU a primit valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(pow_val), pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Power button a primit valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Power button NU a primit valoarea din cauze unei erori");
+        // }
 
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(input_button), input_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Input button se asteapta sa primeasca valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Input button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(mute_button), mute_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Mute button se asteapta sa primeasca valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Mute button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        // }
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(input_val), input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Input button a primit valoarea");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Input button NU a primit valoarea din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(mute_val), mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Mute button a primit valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Mute button NU a primit valoarea din cauze unei erori");
+        // }
 
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, enable_ir_writing.char_handle, sizeof(ds_ir_writing_value), ds_ir_writing_value, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        if (write_success_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Serviciul IR a scris tot");
-        } else
-        {
-            ESP_LOGI(GATTC_TAG, "Serviciul IR NU a scris tot din cauze unei erori");
-        }
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(input_button), input_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Input button se asteapta sa primeasca valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Input button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        // }
+
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(input_val), input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Input button a primit valoarea");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Input button NU a primit valoarea din cauze unei erori");
+        // }
+
+
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, enable_ir_writing.char_handle, sizeof(ds_ir_writing_value), ds_ir_writing_value, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // if (write_success_status == ESP_OK)
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Serviciul IR a scris tot");
+        // } else
+        // {
+        //     ESP_LOGI(GATTC_TAG, "Serviciul IR NU a scris tot din cauze unei erori");
+        // }
 
         break;
     }
@@ -664,7 +747,31 @@ static void set_security_parameters()
 }
 
 
+uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
+{
+    // We use only one interface and one HID report descriptor, so we can ignore parameter 'instance'
+    return hid_report_descriptor;
+}
 
+// Invoked when received GET_REPORT control request
+// Application must fill buffer report's content and return its length.
+// Return zero will cause the stack to STALL request
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen)
+{
+    (void) instance;
+    (void) report_id;
+    (void) report_type;
+    (void) buffer;
+    (void) reqlen;
+
+    return 0;
+}
+
+// Invoked when received SET_REPORT control request or
+// received data on OUT endpoint ( Report ID = 0, Type = 0 )
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
+{
+}
 
 void app_main(void)
 {
@@ -678,6 +785,26 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+
+    ESP_LOGI(TINY_USB_TAG, "USB initialization");
+    const tinyusb_config_t tusb_cfg = {
+        .device_descriptor = NULL,
+        .string_descriptor = hid_string_descriptor,
+        .string_descriptor_count = sizeof(hid_string_descriptor) / sizeof(hid_string_descriptor[0]),
+        .external_phy = false,
+        .configuration_descriptor = hid_configuration_descriptor,
+    };
+
+    ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
+    ESP_LOGI(TINY_USB_TAG, "USB initialization DONE");
+
+    release_button_queue = xQueueCreate(10, sizeof(hid_report_mapper));
+    if (release_button_queue == NULL) {
+        ESP_LOGE(TINY_USB_TAG, "Release button queue was not created successfully");
+        return;
+    }
+
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
