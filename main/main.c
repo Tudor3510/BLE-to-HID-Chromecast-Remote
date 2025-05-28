@@ -1,158 +1,284 @@
-/*
- * SPDX-FileCopyrightText: 2022-2024 Espressif Systems (Shanghai) CO LTD
- *
- * SPDX-License-Identifier: Unlicense OR CC0-1.0
- */
-
-#include <stdlib.h>
-#include "esp_log.h"
+#include <string.h>
+#include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "tinyusb.h"
-#include "class/hid/hid_device.h"
-#include "driver/gpio.h"
+#include "esp_log.h"
+#include "esp_system.h"
+#include "nvs_flash.h"
 
-#define APP_BUTTON (GPIO_NUM_0) // Use BOOT signal by default
-static const char *TAG = "example";
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "esp_netif.h"
 
-/************* TinyUSB descriptors ****************/
+#include "esp_http_server.h"
 
-#define TUSB_DESC_TOTAL_LEN      (TUD_CONFIG_DESC_LEN + CFG_TUD_HID * TUD_HID_DESC_LEN)
-#define HID_ITF_PROTOCOL_CONSUMER 2
+static const char *TAG = "AP_HTTP_SERVER";
+static const char *BUTTON_CONFIG_TAG = "BUTTON_CONFIG";
 
-/**
- * @brief HID report descriptor
- *
- * In this example we implement Keyboard + Mouse HID device,
- * so we must define both report descriptors
- */
-const uint8_t hid_report_descriptor[] = {
-    TUD_HID_REPORT_DESC_KEYBOARD(HID_REPORT_ID(HID_ITF_PROTOCOL_KEYBOARD)),
-    TUD_HID_REPORT_DESC_CONSUMER(HID_REPORT_ID(HID_ITF_PROTOCOL_CONSUMER))
-};
+/* An example web page served at the root URL */
+static const char *HTML_PAGE =
+    "<!DOCTYPE html>\n"
+    "<html>\n"
+    "<head>\n"
+    "    <meta charset=\\\"UTF-8\\\">\n"
+    "    <title>Button Configuration</title>\n"
+    "</head>\n"
+    "<body>\n"
+    "    <h1>Configure Buttons</h1>\n"
+    "\n"
+    "    <form action=\\\"/api/config\\\" method=\\\"POST\\\" onsubmit=\\\"return onSubmitForm();\\\">\n"
+    "        <label for=\\\"volumeBrand\\\">Volume buttons:</label>\n"
+    "        <select id=\\\"volumeBrand\\\" name=\\\"volumeBrand\\\" onchange=\\\"onBrandChange('volumeBrand', 'volumeFrequency')\\\">\n"
+    "            <option value=\\\"Host\\\">Host</option>\n"
+    "            <option value=\\\"BrandA\\\">BrandA</option>\n"
+    "            <option value=\\\"BrandB\\\">BrandB</option>\n"
+    "            <option value=\\\"BrandC\\\">BrandC</option>\n"
+    "        </select>\n"
+    "        <select id=\\\"volumeFrequency\\\" name=\\\"volumeFrequency\\\" style=\\\"display: none;\\\">\n"
+    "            <option value=\\\"1\\\">1</option><option value=\\\"2\\\">2</option><option value=\\\"3\\\">3</option>\n"
+    "            <option value=\\\"4\\\">4</option><option value=\\\"5\\\">5</option><option value=\\\"6\\\">6</option>\n"
+    "            <option value=\\\"7\\\">7</option><option value=\\\"8\\\">8</option><option value=\\\"9\\\">9</option>\n"
+    "            <option value=\\\"10\\\">10</option>\n"
+    "        </select>\n"
+    "        <br><br>\n"
+    "\n"
+    "        <label for=\\\"powerBrand\\\">Power button:</label>\n"
+    "        <select id=\\\"powerBrand\\\" name=\\\"powerBrand\\\" onchange=\\\"onBrandChange('powerBrand', 'powerFrequency')\\\">\n"
+    "            <option value=\\\"Host\\\">Host</option>\n"
+    "            <option value=\\\"BrandA\\\">BrandA</option>\n"
+    "            <option value=\\\"BrandB\\\">BrandB</option>\n"
+    "            <option value=\\\"BrandC\\\">BrandC</option>\n"
+    "        </select>\n"
+    "        <select id=\\\"powerFrequency\\\" name=\\\"powerFrequency\\\" style=\\\"display: none;\\\">\n"
+    "            <option value=\\\"1\\\">1</option><option value=\\\"2\\\">2</option><option value=\\\"3\\\">3</option>\n"
+    "            <option value=\\\"4\\\">4</option><option value=\\\"5\\\">5</option><option value=\\\"6\\\">6</option>\n"
+    "            <option value=\\\"7\\\">7</option><option value=\\\"8\\\">8</option><option value=\\\"9\\\">9</option>\n"
+    "            <option value=\\\"10\\\">10</option>\n"
+    "        </select>\n"
+    "        <br><br>\n"
+    "\n"
+    "        <label for=\\\"inputBrand\\\">Input button:</label>\n"
+    "        <select id=\\\"inputBrand\\\" name=\\\"inputBrand\\\" onchange=\\\"onBrandChange('inputBrand', 'inputFrequency')\\\">\n"
+    "            <option value=\\\"Host\\\">Host</option>\n"
+    "            <option value=\\\"BrandA\\\">BrandA</option>\n"
+    "            <option value=\\\"BrandB\\\">BrandB</option>\n"
+    "            <option value=\\\"BrandC\\\">BrandC</option>\n"
+    "        </select>\n"
+    "        <select id=\\\"inputFrequency\\\" name=\\\"inputFrequency\\\" style=\\\"display: none;\\\">\n"
+    "            <option value=\\\"1\\\">1</option><option value=\\\"2\\\">2</option><option value=\\\"3\\\">3</option>\n"
+    "            <option value=\\\"4\\\">4</option><option value=\\\"5\\\">5</option><option value=\\\"6\\\">6</option>\n"
+    "            <option value=\\\"7\\\">7</option><option value=\\\"8\\\">8</option><option value=\\\"9\\\">9</option>\n"
+    "            <option value=\\\"10\\\">10</option>\n"
+    "        </select>\n"
+    "        <br><br>\n"
+    "\n"
+    "        <button type=\\\"submit\\\">Set</button>\n"
+    "    </form>\n"
+    "\n"
+    "    <script>\n"
+    "        function onBrandChange(brandSelectId, frequencySelectId) {\n"
+    "            var brandSelect = document.getElementById(brandSelectId);\n"
+    "            var frequencySelect = document.getElementById(frequencySelectId);\n"
+    "            if (brandSelect.value === \\\"Host\\\") {\n"
+    "                frequencySelect.style.display = \\\"none\\\";\n"
+    "            } else {\n"
+    "                frequencySelect.style.display = \\\"inline-block\\\";\n"
+    "            }\n"
+    "        }\n"
+    "\n"
+    "        function onSubmitForm() {\n"
+    "            ['volumeBrand','powerBrand','inputBrand'].forEach(function(id) {\n"
+    "                var brand = document.getElementById(id).value;\n"
+    "                var freqSelectId = id.replace('Brand', 'Frequency');\n"
+    "                if (brand === 'Host') {\n"
+    "                    document.getElementById(freqSelectId).value = '';\n"
+    "                }\n"
+    "            });\n"
+    "            return true;\n"
+    "        }\n"
+    "    </script>\n"
+    "</body>\n"
+    "</html>\n";
 
-/**
- * @brief String descriptor
- */
-const char* hid_string_descriptor[5] = {
-    // array of pointer to string descriptors
-    (char[]){0x09, 0x04},  // 0: is supported language is English (0x0409)
-    "TinyUSB",             // 1: Manufacturer
-    "TinyUSB Device",      // 2: Product
-    "123456",              // 3: Serials, should use chip ID
-    "Example HID interface",  // 4: HID
-};
 
-/**
- * @brief Configuration descriptor
- *
- * This is a simple configuration descriptor that defines 1 configuration and 1 HID interface
- */
-static const uint8_t hid_configuration_descriptor[] = {
-    // Configuration number, interface count, string index, total length, attribute, power in mA
-    TUD_CONFIG_DESCRIPTOR(1, 1, 0, TUSB_DESC_TOTAL_LEN, TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP, 100),
 
-    // Interface number, string index, boot protocol, report descriptor len, EP In address, size & polling interval
-    TUD_HID_DESCRIPTOR(0, 4, false, sizeof(hid_report_descriptor), 0x81, 16, 10),
-};
-
-/********* TinyUSB HID callbacks ***************/
-
-// Invoked when received GET HID REPORT DESCRIPTOR request
-// Application return pointer to descriptor, whose contents must exist long enough for transfer to complete
-uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
+/* A simple handler that returns the HTML_PAGE */
+static esp_err_t root_get_handler(httpd_req_t *req)
 {
-    // We use only one interface and one HID report descriptor, so we can ignore parameter 'instance'
-    return hid_report_descriptor;
+    httpd_resp_set_type(req, "text/html");
+    httpd_resp_send(req, HTML_PAGE, strlen(HTML_PAGE));
+    return ESP_OK;
 }
 
-// Invoked when received GET_REPORT control request
-// Application must fill buffer report's content and return its length.
-// Return zero will cause the stack to STALL request
-uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen)
+static esp_err_t config_post_handler(httpd_req_t *req)
 {
-    (void) instance;
-    (void) report_id;
-    (void) report_type;
-    (void) buffer;
-    (void) reqlen;
+    // 1) Read request content
+    char buf[200];
+    int total_len = req->content_len;
+    int cur_len = 0;
+    int received = 0;
 
-    return 0;
+    if (total_len >= sizeof(buf)) {
+        ESP_LOGE(TAG, "Content too large (%d bytes)", total_len);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Content too large");
+        return ESP_FAIL;
+    }
+
+    while (cur_len < total_len) {
+        received = httpd_req_recv(req, buf + cur_len, total_len - cur_len);
+        if (received <= 0) {
+            ESP_LOGE(TAG, "Failed to receive POST data");
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to read POST data");
+            return ESP_FAIL;
+        }
+        cur_len += received;
+    }
+    buf[cur_len] = '\0'; // Null-terminate the data
+
+    ESP_LOGI(TAG, "Received form data: %s", buf);
+
+    // 2) Parse the form data (key-value pairs)
+    char volumeBrand[32] = {0};
+    char volumeFrequency[32] = {0};
+    char powerBrand[32] = {0};
+    char powerFrequency[32] = {0};
+    char inputBrand[32] = {0};
+    char inputFrequency[32] = {0};
+
+    // Attempt to parse each field; if not present, it'll remain empty
+    httpd_query_key_value(buf, "volumeBrand", volumeBrand, sizeof(volumeBrand));
+    httpd_query_key_value(buf, "volumeFrequency", volumeFrequency, sizeof(volumeFrequency));
+    httpd_query_key_value(buf, "powerBrand", powerBrand, sizeof(powerBrand));
+    httpd_query_key_value(buf, "powerFrequency", powerFrequency, sizeof(powerFrequency));
+    httpd_query_key_value(buf, "inputBrand", inputBrand, sizeof(inputBrand));
+    httpd_query_key_value(buf, "inputFrequency", inputFrequency, sizeof(inputFrequency));
+
+    ESP_LOGI(TAG, "Parsed values:");
+    ESP_LOGI(TAG, "  Volume brand:     %s", volumeBrand);
+    ESP_LOGI(TAG, "  Volume frequency: %s", volumeFrequency);
+    ESP_LOGI(TAG, "  Power brand:      %s", powerBrand);
+    ESP_LOGI(TAG, "  Power frequency:  %s", powerFrequency);
+    ESP_LOGI(TAG, "  Input brand:      %s", inputBrand);
+    ESP_LOGI(TAG, "  Input frequency:  %s", inputFrequency);
+
+    // 3) Do something with these values:
+    // For instance, store them in NVS, adjust IR transmitter settings, etc.
+
+    // 4) Send a response back
+    httpd_resp_sendstr(req, "Button configuration updated successfully!");
+
+    return ESP_OK;
 }
 
-// Invoked when received SET_REPORT control request or
-// received data on OUT endpoint ( Report ID = 0, Type = 0 )
-void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
+
+/* URI handler structure for GET / */
+static httpd_uri_t root = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = root_get_handler,
+    .user_ctx  = NULL
+};
+
+static httpd_uri_t config_post_uri = {
+    .uri       = "/api/config",
+    .method    = HTTP_POST,
+    .handler   = config_post_handler,
+    .user_ctx  = NULL
+};
+
+
+/* Function to start the web server */
+static httpd_handle_t start_webserver(void)
 {
+    httpd_handle_t server = NULL;
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+
+    // Optionally change server port (default is 80)
+    // config.server_port = 80;
+
+    if (httpd_start(&server, &config) == ESP_OK) {
+        httpd_register_uri_handler(server, &root);
+        httpd_register_uri_handler(server, &config_post_uri);
+    } else {
+        ESP_LOGE(TAG, "Error starting server!");
+        return NULL;
+    }
+    return server;
 }
 
-/********* Application ***************/
-
-static void app_send_hid_demo(void)
+/* Wi-Fi Event Handler */
+static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data)
 {
-    // Keyboard output: Send key 'a/A' pressed and released
-    ESP_LOGI(TAG, "Sending Keyboard report");
-    uint8_t keycode[8] = {0, 0, HID_KEY_A, 0, 0, 0, 0, 0};
-    tud_hid_report(0x01, keycode, sizeof(keycode));
-    vTaskDelay(pdMS_TO_TICKS(100));
-    uint8_t keycode_release_all[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    tud_hid_report(0x01, keycode_release_all, sizeof(keycode_release_all));
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_START) {
+        ESP_LOGI(TAG, "Wi-Fi AP started");
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STACONNECTED) {
+        wifi_event_ap_staconnected_t* event = (wifi_event_ap_staconnected_t*) event_data;
+        ESP_LOGI(TAG, "Station joined, AID=%u", event->aid);
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
+        wifi_event_ap_stadisconnected_t* event = (wifi_event_ap_stadisconnected_t*) event_data;
+        ESP_LOGI(TAG, "Station left, AID=%u", event->aid);
+    }
+}
 
 
-    vTaskDelay(pdMS_TO_TICKS(100));
+void wifi_init_softap(void)
+{
+    /* Initialize TCP/IP and the event loop */
+    esp_netif_init();
+    esp_event_loop_create_default();
 
-    uint8_t volume_key[2] = {HID_USAGE_CONSUMER_MUTE, 0};
+    /* Create default Wi-Fi AP. This gives us a network interface we can configure. */
+    esp_netif_create_default_wifi_ap();
 
-    // Press
-    ESP_LOGI(TAG, "Consumer: Press Mute");
-    tud_hid_report(0x02, &volume_key, sizeof(volume_key));
-    vTaskDelay(pdMS_TO_TICKS(100));
+    /* Wi-Fi Config */
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    esp_wifi_init(&cfg);
 
-    // Release
-    ESP_LOGI(TAG, "Consumer: Release Mute");
-    volume_key[0] = 0;
-    tud_hid_report(0x02, &volume_key, sizeof(volume_key));
+    /* Register event handler */
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_register(WIFI_EVENT,
+                                       ESP_EVENT_ANY_ID,
+                                       &event_handler,
+                                       NULL,
+                                       &instance_any_id);
 
+    /* Wi-Fi configuration for Access Point mode */
+    wifi_config_t wifi_config = {
+        .ap = {
+            .ssid = "ESP32S3-AP",         // SSID of the AP
+            .ssid_len = strlen("ESP32S3-AP"),
+            .channel = 1,
+            .password = "qwerty358",       // Password of the AP
+            .max_connection = 4,
+            .authmode = WIFI_AUTH_WPA_WPA2_PSK
+        },
+    };
+    // If password is empty, set authmode to WIFI_AUTH_OPEN
+    if (strlen((char *)wifi_config.ap.password) == 0) {
+        wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+    }
+
+    /* Set mode to AP and apply config */
+    esp_wifi_set_mode(WIFI_MODE_AP);
+    esp_wifi_set_config(WIFI_IF_AP, &wifi_config);
+    esp_wifi_start();
+
+    ESP_LOGI(TAG, "wifi_init_softap finished. SSID:%s password:%s channel:%d",
+             wifi_config.ap.ssid, wifi_config.ap.password, wifi_config.ap.channel);
 }
 
 void app_main(void)
 {
-    // Initialize button that will trigger HID reports
-    const gpio_config_t boot_button_config = {
-        .pin_bit_mask = BIT64(APP_BUTTON),
-        .mode = GPIO_MODE_INPUT,
-        .intr_type = GPIO_INTR_DISABLE,
-        .pull_up_en = true,
-        .pull_down_en = false,
-    };
-    ESP_ERROR_CHECK(gpio_config(&boot_button_config));
-
-    ESP_LOGI(TAG, "USB initialization");
-    const tinyusb_config_t tusb_cfg = {
-        .device_descriptor = NULL,
-        .string_descriptor = hid_string_descriptor,
-        .string_descriptor_count = sizeof(hid_string_descriptor) / sizeof(hid_string_descriptor[0]),
-        .external_phy = false,
-#if (TUD_OPT_HIGH_SPEED)
-        .fs_configuration_descriptor = hid_configuration_descriptor, // HID configuration descriptor for full-speed and high-speed are the same
-        .hs_configuration_descriptor = hid_configuration_descriptor,
-        .qualifier_descriptor = NULL,
-#else
-        .configuration_descriptor = hid_configuration_descriptor,
-#endif // TUD_OPT_HIGH_SPEED
-    };
-
-    ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
-    ESP_LOGI(TAG, "USB initialization DONE");
-
-    while (1) {
-        if (tud_mounted()) {
-            static bool send_hid_data = true;
-            if (send_hid_data) {
-                app_send_hid_demo();
-            }
-            send_hid_data = !gpio_get_level(APP_BUTTON);
-        }
-        vTaskDelay(pdMS_TO_TICKS(100));
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
     }
+    ESP_ERROR_CHECK(ret);
+
+    /* Initialize and start Wi-Fi in AP mode */
+    wifi_init_softap();
+
+    /* Start HTTP server */
+    start_webserver();
 }
