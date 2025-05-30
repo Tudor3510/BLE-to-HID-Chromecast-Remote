@@ -91,8 +91,6 @@ static const uint8_t hid_configuration_descriptor[] = {
 static QueueHandle_t release_button_queue;
 
 
-
-
 uint8_t const *tud_hid_descriptor_report_cb(uint8_t instance)
 {
     // We use only one interface and one HID report descriptor, so we can ignore parameter 'instance'
@@ -117,6 +115,28 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 // received data on OUT endpoint ( Report ID = 0, Type = 0 )
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
 {
+}
+
+void remote_button_cb(uint8_t value)
+{
+    ESP_LOGI(TINY_USB_TAG, "Sending Keyboard report");
+
+    if (value == REMOTE_RELEASE_KEY)
+    {
+        ESP_LOGI(TINY_USB_TAG, "Release Key");
+
+        hid_report_mapper hid_report_mapper_copy;
+        xQueueReceive(release_button_queue, &hid_report_mapper_copy, 0);
+        tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
+    }
+    else
+    {
+        hid_report_mapper hid_report_mapper_copy = remote_map_windows_hid[value];
+        tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
+
+        hid_report_mapper_copy.keycode[0] = 0, hid_report_mapper_copy.keycode[2] = 0;
+        xQueueSend(release_button_queue, &hid_report_mapper_copy, 0);
+    }
 }
 
 void app_main(void)
@@ -159,29 +179,15 @@ void app_main(void)
     } else {
         ESP_LOGE(TAG, "Failed to add device to whitelist: 0x%x", ret);
     }
-
-    ret = esp_ble_gap_update_whitelist(true, target_device_addr, BLE_ADDR_TYPE_PUBLIC);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Device added to whitelist successfully");
-    } else {
-        ESP_LOGE(TAG, "Failed to add device to whitelist: 0x%x", ret);
-    }
-
-    int dev_num = esp_ble_get_bond_device_num();
-
-    esp_ble_bond_dev_t dev_list[dev_num];
-    esp_ble_get_bond_device_list(&dev_num, dev_list);
-
-    for (int i = 0; i < dev_num; i++) {
-        ESP_LOGI("BOND", "Bonded device %d: %02x:%02x:%02x:%02x:%02x:%02x",
-            i,
-            dev_list[i].bd_addr[0], dev_list[i].bd_addr[1], dev_list[i].bd_addr[2],
-            dev_list[i].bd_addr[3], dev_list[i].bd_addr[4], dev_list[i].bd_addr[5]);
-    }
     
-    register_ble_callbacks(esp_gap_cb, esp_gattc_cb);
+
+    register_ble_button_callback(remote_button_cb);
+    register_ble_callbacks(get_ble_gap_callback(), get_ble_gattc_callback());
 
     // Start scanning
-    esp_ble_gap_start_scanning(0);
+    ret = esp_ble_gap_start_scanning(0);
+    if (ret != ESP_OK) {
+        ESP_LOGE("BLE_SCAN", "Failed to start scanning: %s", esp_err_to_name(ret));
+    }
 
 }

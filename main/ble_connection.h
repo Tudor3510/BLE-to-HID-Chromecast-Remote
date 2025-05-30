@@ -65,6 +65,14 @@ static esp_ble_scan_params_t ble_scan_params = {
 };
 
 
+// Step 1: Declare a static variable to store the callback
+static void (*ble_button_cb)(uint8_t) = NULL;
+
+// Step 2: Register function
+void register_ble_button_callback(void (*callback)(uint8_t)) {
+    ble_button_cb = callback;
+}
+
 
 static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *param)
 {
@@ -82,7 +90,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
         {
             ESP_LOGE(GATTC_TAG, "Scan start failed, error status = %x", param->scan_start_cmpl.status);
             vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for 1 second before retrying
-            start_scan();
+            esp_ble_gap_start_scanning(0);
         }
         break;
     case ESP_GAP_BLE_SCAN_RESULT_EVT:
@@ -169,7 +177,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     case ESP_GATTC_DISCONNECT_EVT:
         ESP_LOGI(GATTC_TAG, "Start scanning because of disconnect reason 0x%02X", param->disconnect.reason);
         vTaskDelay(pdMS_TO_TICKS(1000));
-        start_scan();
+        esp_ble_gap_start_scanning(0);
 
         break;
     case ESP_GATTC_SEARCH_RES_EVT:
@@ -245,33 +253,11 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         break;
     case ESP_GATTC_NOTIFY_EVT:
     {
-        ESP_LOGI(GATTC_TAG, "Notification received for handle: 0x%04x", param->notify.handle);
         if (param->notify.is_notify)
         {
             ESP_LOGI(GATTC_TAG, "Notification received for handle: %d", param->notify.handle);
-            ESP_LOGI(GATTC_TAG, "Notification data: ");
-            ESP_LOGI(GATTC_TAG, "0x%02x ", param->notify.value[0]);
 
-            ESP_LOGI(TINY_USB_TAG, "Sending Keyboard report");
-            
-            if (param->notify.value[0] == REMOTE_RELEASE_KEY)
-            {
-                ESP_LOGI(TINY_USB_TAG, "--Release Key");
-
-                hid_report_mapper hid_report_mapper_copy;
-                xQueueReceive(release_button_queue, &hid_report_mapper_copy, 0);
-                tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
-            }
-            else
-            {
-                hid_report_mapper hid_report_mapper_copy = remote_map_windows_hid[param->notify.value[0]];
-                tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
-
-                hid_report_mapper_copy.keycode[0] = 0, hid_report_mapper_copy.keycode[2] = 0;
-                xQueueSend(release_button_queue, &hid_report_mapper_copy, 0);
-            }
-
-            // xQueueSend(hid_queue, &remote_map_windows_hid[param->notify.value[0]], 0); // non-blocking send
+            ble_button_cb(param->notify.value[0]);
         }
         else
         {
@@ -456,4 +442,19 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     default:
         break;
     }
+}
+
+
+
+
+/* Return a pointer to the file-local static esp_gap_cb() */
+esp_gap_ble_cb_t get_ble_gap_callback()
+{
+    return esp_gap_cb;        /* '&' is optional for function names */
+}
+
+/* Return a pointer to the file-local static esp_gattc_cb() */
+esp_gattc_cb_t get_ble_gattc_callback()
+{
+    return esp_gattc_cb;
 }
