@@ -39,7 +39,7 @@ void ble_stack_init()
 }
 
 
-void register_ble_callbacks(esp_gap_ble_cb_t *gap_cb, esp_gattc_cb_t *gattc_cb)
+void register_ble_callbacks(esp_gap_ble_cb_t gap_cb, esp_gattc_cb_t gattc_cb)
 {
     if (gap_cb == NULL || gattc_cb == NULL) {
         ESP_LOGE(TAG, "GAP and GATTC callbacks must not be NULL.");

@@ -26,7 +26,7 @@
 #define GATTC_TAG "GATTC_CLIENT"
 #define TINY_USB_TAG "TINY_USB"
 #define REMOTE_DEVICE_NAME "MyBLEDevice"
-#define SCAN_DURATION_SECONDS 30
+#define SCAN_DURATION_SECONDS 0
 #define MAX_RETRY_COUNT 3
 #define PROFILE_NUM 1
 #define PROFILE_A_APP_ID 0
@@ -94,7 +94,7 @@ static esp_gattc_char_elem_t code_to_write;
 static esp_ble_scan_params_t ble_scan_params = {
     .scan_type = BLE_SCAN_TYPE_ACTIVE,
     .own_addr_type = BLE_ADDR_TYPE_PUBLIC,
-    .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ALL,
+    .scan_filter_policy = BLE_SCAN_FILTER_ALLOW_ONLY_WLST,
     .scan_interval = 0x50,
     .scan_window = 0x30,
     .scan_duplicate = BLE_SCAN_DUPLICATE_DISABLE
@@ -213,32 +213,6 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
             is_paired = false;
         }
         break;
-    case ESP_GAP_BLE_KEY_EVT:
-        ESP_LOGI(GATTC_TAG, "ESP_GAP_BLE_KEY_EVT");
-        break;
-    case ESP_GAP_BLE_PASSKEY_NOTIF_EVT:
-        ESP_LOGI(GATTC_TAG, "ESP_GAP_BLE_PASSKEY_NOTIF_EVT, passkey:%d", (int)param->ble_security.key_notif.passkey);
-        break;
-    case ESP_GAP_BLE_PASSKEY_REQ_EVT:
-        ESP_LOGI(GATTC_TAG, "ESP_GAP_BLE_PASSKEY_REQ_EVT");
-        // If your device requires a specific passkey, you can set it here
-        // esp_ble_passkey_reply(param->ble_security.ble_req.bd_addr, true, 123456);
-        break;
-    case ESP_GAP_BLE_NC_REQ_EVT:
-        // Numeric comparison request event (not used for Just Works)
-        ESP_LOGI(GATTC_TAG, "Numeric Comparison");
-        // esp_ble_confirm_reply(param->ble_security_req.bd_addr, true);
-        break;
-    case ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT: {
-        esp_ble_gap_conn_params_t *params = &param->update_conn_params;
-
-        ESP_LOGI(GATTC_TAG, "Connection parameters updated:");
-        ESP_LOGI(GATTC_TAG, "Interval: %d", params->interval_min);  // or int_max
-        ESP_LOGI(GATTC_TAG, "Latency: %d", params->latency);
-        ESP_LOGI(GATTC_TAG, "Timeout: %d (%.1f seconds)", params->supervision_timeout, params->supervision_timeout * 0.01);
-
-        break;
-}
     default:
         break;
     }
@@ -269,7 +243,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // Tested for now
         esp_err_t ret = esp_ble_set_encryption(param->connect.remote_bda, ESP_BLE_SEC_ENCRYPT);
         if (ret != ESP_OK) {
-            ESP_LOGE(GATTC_TAG, "Failed to set encryption, err = 0x%x", ret);
+            ESP_LOGE(GATTC_TAG, "Failed to set encryption on ESP_GATTC_CONNECT_EVT, err = 0x%x", ret);
         }
 
 
@@ -280,52 +254,11 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         connection_timestamp = esp_log_timestamp();
 
 
-        esp_ble_gattc_cb_param_t *conn = param;
-
-        uint16_t interval = conn->connect.conn_params.interval;   // in units of 1.25ms
-        uint16_t latency  = conn->connect.conn_params.latency;
-        uint16_t max_timeout = ((1 + latency) * interval * 2) + 1;  // minimum valid timeout in 10ms units
-
-        ESP_LOGI(GATTC_TAG, "Connected to peripheral");
-        ESP_LOGI(GATTC_TAG, "Interval: %d (%.2f ms)", interval, interval * 1.25);
-        ESP_LOGI(GATTC_TAG, "Latency: %d", latency);
-        ESP_LOGI(GATTC_TAG, "Max safe supervision timeout: %d (%.1f seconds)",
-                max_timeout, max_timeout * 0.01);
-
-        esp_ble_conn_update_params_t update_params = {
-            .min_int = 0x10,  // 20ms
-            .max_int = 0x20,  // 40ms
-            .latency = 0,
-            .timeout = 3000,  // 30 seconds (in 10ms units)
-        };
-        memcpy(update_params.bda, conn->connect.remote_bda, sizeof(esp_bd_addr_t));
-        esp_ble_gap_update_conn_params(&update_params);
-
-
         break;
     case ESP_GATTC_OPEN_EVT:
-        if (param->open.status == ESP_GATT_OK)
+        if (param->open.status != ESP_GATT_OK)
         {
-            ESP_LOGI(GATTC_TAG, "Open success");
-            retry_count = 0;                                                   // Reset retry count on successful connection
-            //vTaskDelay(pdMS_TO_TICKS(3000));
-            //esp_ble_gattc_search_service(gattc_if, param->open.conn_id, NULL); // Discover all services
-        }
-        else
-        {
-            ESP_LOGE(GATTC_TAG, "Open failed, status %d", param->open.status);
-            if (retry_count < MAX_RETRY_COUNT)
-            {
-                retry_count++;
-                ESP_LOGI(GATTC_TAG, "Retrying connection (attempt %d of %d)...", retry_count, MAX_RETRY_COUNT);
-                esp_ble_gattc_close(gattc_if, param->open.conn_id);
-                vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for 1 second before retrying
-                start_scan();
-            }
-            else
-            {
-                ESP_LOGE(GATTC_TAG, "Max retry count reached. Unable to connect.");
-            }
+            ESP_LOGE(GATTC_TAG, "Failed to open connection, status = 0x%02X", param->open.status);
         }
         break;
     case ESP_GATTC_CFG_MTU_EVT:
@@ -333,23 +266,12 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         {
             ESP_LOGE(GATTC_TAG, "Config MTU failed, error status = %x", param->cfg_mtu.status);
         }
-        ESP_LOGI(GATTC_TAG, "Status %d, MTU %d, conn_id %d", param->cfg_mtu.status, param->cfg_mtu.mtu, param->cfg_mtu.conn_id);
         break;
     case ESP_GATTC_DISCONNECT_EVT:
-        ESP_LOGI(GATTC_TAG, "ESP_GATTC_DISCONNECT_EVT, reason = %d", param->disconnect.reason);
-        conn_id = 0;
-        is_paired = false;
-        if (retry_count < MAX_RETRY_COUNT)
-        {
-            retry_count++;
-            ESP_LOGI(GATTC_TAG, "Retrying connection (attempt %d of %d)...", retry_count, MAX_RETRY_COUNT);
-            vTaskDelay(pdMS_TO_TICKS(1000)); // Wait for 1 second before retrying
-            start_scan();
-        }
-        else
-        {
-            ESP_LOGE(GATTC_TAG, "Max retry count reached. Unable to maintain connection.");
-        }
+        ESP_LOGI(GATTC_TAG, "Start scanning because of disconnect reason 0x%02X", param->disconnect.reason);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        start_scan();
+
         break;
     case ESP_GATTC_SEARCH_RES_EVT:
         // Look for specific services, like a known UUID
@@ -412,62 +334,14 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
 
         break;
     case ESP_GATTC_SEARCH_CMPL_EVT:
-        ESP_LOGI(GATTC_TAG, "Service search completed");
         // After services are discovered, search for the characteristic you're interested in
         // esp_ble_gattc_get_characteristic(gattc_if, param->search_cmpl.conn_id, NULL, NULL);
-
-
         esp_err_t notify_enabled_status = esp_ble_gattc_register_for_notify(gattc_if, current_remote_bda, charact.char_handle);
-        if (notify_enabled_status == ESP_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "Registered for notifications successfully");
-
-            uint16_t count = 2;
-            esp_gattc_descr_elem_t *descr_elem_result = (esp_gattc_descr_elem_t *)malloc(sizeof(esp_gattc_descr_elem_t) * count);
-            esp_err_t status = esp_ble_gattc_get_all_descr(gattc_if, p_data->connect.conn_id, charact.char_handle, descr_elem_result, &count, 0);
-
-            if (status == ESP_OK)
-            {
-                ESP_LOGI(GATTC_TAG, "Number of descriptors found: %d", count);
-
-                // Loop through the result and display the UUID and handle of each descriptor
-                for (int i = 0; i < count; i++)
-                {
-                    ESP_LOGI(GATTC_TAG, "Descriptor %d: Handle = 0x%04x, UUID = 0x%04x", i, descr_elem_result[i].handle, descr_elem_result[i].uuid.uuid.uuid16);
-
-                    // If the descriptor is CCCD (UUID 0x2902), log it
-                    if (descr_elem_result[i].uuid.uuid.uuid16 == ESP_GATT_UUID_CHAR_CLIENT_CONFIG)
-                    {
-                        ESP_LOGI(GATTC_TAG, "Found Client Characteristic Configuration Descriptor (CCCD) at handle 0x%04x, with i = %d", descr_elem_result[i].handle, i);
-                    }
-                }
-            }
-            else
-            {
-                ESP_LOGE(GATTC_TAG, "Failed to get descriptors, error: %s", esp_err_to_name(status));
-            }
-
-            uint8_t notify_en[2] = {0x01, 0x00};  // Enable notifications
-            // esp_err_t write_status = esp_ble_gattc_write_char_descr(gattc_if, conn_id, descr_elem_result[0].handle, sizeof(notify_en), notify_en, ESP_GATT_WRITE_TYPE_NO_RSP, ESP_GATT_AUTH_REQ_NONE);
-
-
-            // if (write_status == ESP_OK)
-            // {
-            //     ESP_LOGI(GATTC_TAG, "Notification enabled successfully on the server");
-            // }
-            // else
-            // {
-            //     ESP_LOGE(GATTC_TAG, "Failed to write to CCCD to enable notifications, error code: %d", write_status);
-            // }
-        }
-        else
+        if (notify_enabled_status != ESP_OK)
         {
             ESP_LOGE(GATTC_TAG, "Failed to register for notifications, error code: %d", notify_enabled_status);
         }
 
-
-
-        
         
         break;
     case ESP_GATTC_NOTIFY_EVT:
@@ -508,10 +382,10 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     }
     case ESP_GATTC_REG_FOR_NOTIFY_EVT:
     {
-        if (p_data->reg_for_notify.status == ESP_GATT_OK)
-            ESP_LOGE(GATTC_TAG, "---Verification in separate event: Notification registered successfully");
-
-
+        if (p_data->reg_for_notify.status != ESP_GATT_OK)
+        {
+            ESP_LOGE(GATTC_TAG, "Failed to register for notification, status = 0x%x", p_data->reg_for_notify.status);
+        }
 
         uint8_t en_ir_writing_value[1] = {0x01}; // Enable notification
         uint8_t ds_ir_writing_value[1] = {0x00};
@@ -666,12 +540,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     }
     case ESP_GATTC_WRITE_DESCR_EVT:
     {
-        ESP_LOGE(GATTC_TAG, "-----Am intrat aici");
-        if (param->write.status == ESP_GATT_OK)
-        {
-            ESP_LOGI(GATTC_TAG, "---Descriptor write successful. Handle: 0x%04x", param->write.handle);
-        }
-        else
+        if (param->write.status != ESP_GATT_OK)
         {
             ESP_LOGE(GATTC_TAG, "Descriptor write failed. Status: %d, Handle: 0x%04x", param->write.status, param->write.handle);
         }
@@ -679,13 +548,11 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     }
     case ESP_GATTC_WRITE_CHAR_EVT:
     {
-        ESP_LOGE(GATTC_TAG, "------------------Am intrat aici !!!!!");
 
-        if (p_data->write.status == ESP_GATT_OK)
-            ESP_LOGE(GATTC_TAG, "---Write was succesful.");
-        else
+        if (p_data->write.status != ESP_GATT_OK)
+        {
             ESP_LOGE(GATTC_TAG, "---Write failed with status 0x%X", p_data->write.status);
-
+        }
         break;
     }
 
@@ -775,6 +642,20 @@ void app_main(void)
     }
 
     ble_stack_init();
+
+    ret = esp_ble_gap_update_whitelist(true, target_device_addr, BLE_ADDR_TYPE_PUBLIC);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Device added to whitelist successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to add device to whitelist: 0x%x", ret);
+    }
+
+    ret = esp_ble_gap_update_whitelist(true, target_device_addr, BLE_ADDR_TYPE_PUBLIC);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Device added to whitelist successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to add device to whitelist: 0x%x", ret);
+    }
 
     int dev_num = esp_ble_get_bond_device_num();
 
