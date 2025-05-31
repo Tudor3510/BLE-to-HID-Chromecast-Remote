@@ -209,4 +209,19 @@ void app_main(void)
 
     // Start scanning
     handle_connection();
+
+
+
+
+
+    vTaskDelay(pdMS_TO_TICKS(15000));
+
+    ESP_LOGW("APP", "Wow, am ajuns aici deja");
+    
+    esp_err_t err = enable_ir_buttons();
+    if (err != ESP_OK) {
+        ESP_LOGW("APP", "Failed to disable IR buttons: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGW("APP", "Aparent, avem ESP_OK");
+    }
 }
