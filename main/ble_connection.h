@@ -315,111 +315,6 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             ESP_LOGE(GATTC_TAG, "Failed to register for notification, status = 0x%x", p_data->reg_for_notify.status);
         }
 
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_UP_BUTTON), VOL_UP_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, vol_up_val_sz, vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button NU a primit valoarea din cauze unei erori");
-        // }
-
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_DOWN_BUTTON), VOL_DOWN_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, vol_down_val_sz, vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button NU a primit valoarea din cauze unei erori");
-        // }
-        
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(POW_BUTTON), POW_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, pow_val_sz, pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button NU a primit valoarea din cauze unei erori");
-        // }
-
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(MUTE_BUTTON), MUTE_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, mute_val_sz, mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button NU a primit valoarea din cauze unei erori");
-        // }
-
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(INPUT_BUTTON), INPUT_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, input_val_sz, input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button NU a primit valoarea din cauze unei erori");
-        // }
-
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(IR_CONFIG_DISABLE_VAL), &IR_CONFIG_DISABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Serviciul IR a scris tot");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Serviciul IR NU a scris tot din cauze unei erori");
-        // }
-
         break;
     }
     case ESP_GATTC_WRITE_DESCR_EVT:
@@ -432,7 +327,6 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     }
     case ESP_GATTC_WRITE_CHAR_EVT:
     {
-        ESP_LOGW("APP", "-------Am intrat");
         if (p_data->write.status != ESP_GATT_OK)
         {
             ESP_LOGE(GATTC_TAG, "---Write failed with status 0x%X", p_data->write.status);
@@ -784,10 +678,9 @@ esp_err_t enable_ir_buttons()
         }
 
         // Wait a bit before trying again to avoid hogging the CPU
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
-    ESP_LOGW("APP", "Returnam de aici");
     return ir_write_result;
 }
 
@@ -846,7 +739,7 @@ esp_err_t disable_ir_buttons()
         }
 
         // Wait a bit before trying again to avoid hogging the CPU
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 
     return ir_write_result;
