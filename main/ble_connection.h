@@ -32,8 +32,9 @@
 
 
 
-
 #define GATTC_TAG "GATTC_CLIENT"
+#define IR_CODE_SET_TAG "IR_CODE"
+#define TASK_SYNC_TAG "TASK_SYNC"
 
 // For convenience, define the numeric code for connectable directed adv:
 #define ADV_DIRECT_IND 0x01
@@ -52,12 +53,12 @@ static const uint8_t TARGET_IR_SERV_UUID[ESP_UUID_LEN_128] = {
 
 static const uint8_t IR_CONFIG_ENABLE_VAL = 0x01;
 static const uint8_t IR_CONFIG_DISABLE_VAL = 0x00;
-
 static const uint8_t VOL_UP_BUTTON[2] = {0x00, 0x18};
 static const uint8_t VOL_DOWN_BUTTON[2] = {0x00, 0x19};
 static const uint8_t POW_BUTTON[2] = {0x00, 0x1a};  // Hex value to write
 static const uint8_t MUTE_BUTTON[2] = {0x00, 0xa4};
 static const uint8_t INPUT_BUTTON[2] = {0x00, 0xb2};
+
 
 static esp_bd_addr_t target_device_addr;
 static uint16_t gl_gattc_if = ESP_GATT_IF_NONE;
@@ -69,8 +70,38 @@ static esp_gattc_char_elem_t ir_button_char;
 static esp_gattc_char_elem_t ir_code_char;
 
 
+static uint8_t vol_up_val_sz;
+static uint8_t *vol_up_val;
 
-        
+static uint8_t vol_down_val_sz;
+static uint8_t *vol_down_val;
+
+static uint8_t pow_val_sz;
+static uint8_t *pow_val;
+
+static uint8_t mute_val_sz;
+static uint8_t *mute_val;
+
+static uint8_t input_val_sz;
+static uint8_t *input_val;
+
+
+static SemaphoreHandle_t ir_write_in_progress_mtx = NULL;
+static bool ir_write_in_progress = false;
+
+typedef enum {
+    IR_BUTTON_NONE = 0,
+    IR_BUTTON_VOL_UP,
+    IR_BUTTON_VOL_DOWN,
+    IR_BUTTON_POWER,
+    IR_BUTTON_MUTE,
+    IR_BUTTON_INPUT,
+    IR_BUTTON_FINISH_WRITING
+    // Add more buttons as needed
+} ir_button_t;
+
+static volatile ir_button_t ir_btn_to_write_next = IR_BUTTON_NONE;
+static volatile esp_err_t ir_write_result = ESP_OK;
 
 
 static esp_ble_scan_params_t ble_scan_params = {
@@ -284,138 +315,103 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             ESP_LOGE(GATTC_TAG, "Failed to register for notification, status = 0x%x", p_data->reg_for_notify.status);
         }
 
-        
-        uint8_t vol_up_val[] = {
-            0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
-        };
 
-
-        uint8_t vol_down_val[] = {
-            0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
-        };
-
-        uint8_t pow_val[] = {
-            0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
-        };
-
-        uint8_t mute_val[] = {
-            0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
-        };
-
-        uint8_t input_val[] = {
-            0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
-        };
-
-        // Step 1: Register for notifications on the client side
-        ESP_LOGI(GATTC_TAG, "Trying to activate IR service on device");
-
-
-        esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(&IR_CONFIG_ENABLE_VAL), &IR_CONFIG_ENABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_UP_BUTTON), VOL_UP_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         if (write_success_status == ESP_OK)
         {
-            ESP_LOGI(GATTC_TAG, "Serviciul IR se asteapta sa scriem");
+            ESP_LOGI(GATTC_TAG, "Volume up button se asteapta sa primeasca valoarea");
         } else
         {
-            ESP_LOGI(GATTC_TAG, "Serviciul IR NU se asteapta sa scriem din cauze unei erori");
+            ESP_LOGI(GATTC_TAG, "Volume up button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        }
+
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, vol_up_val_sz, vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Volume up button a primit valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Volume up button NU a primit valoarea din cauze unei erori");
         }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_UP_BUTTON), VOL_UP_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_DOWN_BUTTON), VOL_DOWN_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Volume down button se asteapta sa primeasca valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Volume down button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(vol_up_val), vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume up button NU a primit valoarea din cauze unei erori");
-        // }
-
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_DOWN_BUTTON), VOL_DOWN_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(vol_down_val), vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Volume down button NU a primit valoarea din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, vol_down_val_sz, vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Volume down button a primit valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Volume down button NU a primit valoarea din cauze unei erori");
+        }
         
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(POW_BUTTON), POW_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(POW_BUTTON), POW_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Power button se asteapta sa primeasca valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Power button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(pow_val), pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Power button NU a primit valoarea din cauze unei erori");
-        // }
-
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(MUTE_BUTTON), MUTE_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
-
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(mute_val), mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Mute button NU a primit valoarea din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, pow_val_sz, pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Power button a primit valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Power button NU a primit valoarea din cauze unei erori");
+        }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(INPUT_BUTTON), INPUT_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button se asteapta sa primeasca valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button NU se asteapta sa primeasca valoarea din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(MUTE_BUTTON), MUTE_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Mute button se asteapta sa primeasca valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Mute button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(input_val), input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button a primit valoarea");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Input button NU a primit valoarea din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, mute_val_sz, mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Mute button a primit valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Mute button NU a primit valoarea din cauze unei erori");
+        }
 
 
-        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(&IR_CONFIG_DISABLE_VAL), &IR_CONFIG_DISABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(INPUT_BUTTON), INPUT_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Input button se asteapta sa primeasca valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Input button NU se asteapta sa primeasca valoarea din cauze unei erori");
+        }
+
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, input_val_sz, input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Input button a primit valoarea");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Input button NU a primit valoarea din cauze unei erori");
+        }
+
+
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(IR_CONFIG_DISABLE_VAL), &IR_CONFIG_DISABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         if (write_success_status == ESP_OK)
         {
             ESP_LOGI(GATTC_TAG, "Serviciul IR a scris tot");
@@ -436,14 +432,199 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     }
     case ESP_GATTC_WRITE_CHAR_EVT:
     {
-
         if (p_data->write.status != ESP_GATT_OK)
         {
             ESP_LOGE(GATTC_TAG, "---Write failed with status 0x%X", p_data->write.status);
+            ir_write_result = ESP_FAIL;
+            if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY))
+            {
+                ir_write_in_progress = false;
+                xSemaphoreGive(ir_write_in_progress_mtx);
+            }
+            else
+            {
+                ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex in enable_ir_buttons()");
+                ir_write_in_progress = false;
+            }
+            break;
         }
 
-
+        if (p_data->write.handle == ir_config_char.char_handle && ir_btn_to_write_next == IR_BUTTON_NONE)
+        {
+            if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY))
+            {
+                ir_write_in_progress = false;
+                xSemaphoreGive(ir_write_in_progress_mtx);
+            }
+            else
+            {
+                ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex in enable_ir_buttons()");
+                ir_write_result = ESP_FAIL;
+                ir_write_in_progress = false;
+            }
+            break;
+        }
         
+        if (ir_btn_to_write_next == IR_BUTTON_FINISH_WRITING)
+        {
+            ir_btn_to_write_next = IR_BUTTON_NONE;
+
+            esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(IR_CONFIG_DISABLE_VAL), &IR_CONFIG_DISABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+            if (write_success_status != ESP_OK)
+            {
+                ESP_LOGE(GATTC_TAG,
+                        "Failed to initiate write to IR config characteristic (handle: 0x%04x). "
+                        "esp_ble_gattc_write_char() returned 0x%x (%s). Possible causes: invalid connection, "
+                        "write not permitted, or GATT busy.",
+                        ir_config_char.char_handle,
+                        write_success_status,
+                        esp_err_to_name(write_success_status));
+
+                ir_write_result = ESP_FAIL;
+                // Reset the in-progress flag before returning
+                if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY))
+                {
+                    ir_write_in_progress = false;
+                    xSemaphoreGive(ir_write_in_progress_mtx);
+                }
+                else
+                {
+                    ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex while resetting ir_write_in_progress");
+                    ir_write_in_progress = false;
+                }
+
+                break;
+            }
+        }
+
+        if (p_data->write.handle == ir_config_char.char_handle || p_data->write.handle == ir_code_char.char_handle)
+        {
+            uint8_t ir_btn_len;
+            uint8_t *ir_btn_buf;
+
+            if (ir_btn_to_write_next == IR_BUTTON_VOL_UP)
+            {
+                ir_btn_len = sizeof(VOL_UP_BUTTON);
+                ir_btn_buf = VOL_UP_BUTTON;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_VOL_DOWN)
+            {
+                ir_btn_len = sizeof(VOL_DOWN_BUTTON);
+                ir_btn_buf = VOL_DOWN_BUTTON;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_POWER)
+            {
+                ir_btn_len = sizeof(POW_BUTTON);
+                ir_btn_buf = POW_BUTTON;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_MUTE)
+            {
+                ir_btn_len = sizeof(MUTE_BUTTON);
+                ir_btn_buf = MUTE_BUTTON;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_INPUT)
+            {
+                ir_btn_len = sizeof(INPUT_BUTTON);
+                ir_btn_buf = INPUT_BUTTON;
+            }
+
+            esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, ir_btn_len, ir_btn_buf, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+            if (write_success_status != ESP_OK)
+            {
+                ESP_LOGE(GATTC_TAG,
+                        "Failed to initiate write to IR config characteristic (handle: 0x%04x). "
+                        "esp_ble_gattc_write_char() returned 0x%x (%s). Possible causes: invalid connection, "
+                        "write not permitted, or GATT busy.",
+                        ir_config_char.char_handle,
+                        write_success_status,
+                        esp_err_to_name(write_success_status));
+
+                ir_write_result = ESP_FAIL;
+                // Reset the in-progress flag before returning
+                if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY))
+                {
+                    ir_write_in_progress = false;
+                    xSemaphoreGive(ir_write_in_progress_mtx);
+                }
+                else
+                {
+                    ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex while resetting ir_write_in_progress");
+                    ir_write_in_progress = false;
+                }
+            }
+
+            break;
+        }
+
+        if (p_data->write.handle == ir_button_char.char_handle)
+        {
+            uint8_t ir_btn_len;
+            uint8_t *ir_btn_buf;
+
+            if (ir_btn_to_write_next == IR_BUTTON_VOL_UP)
+            {
+                ir_btn_len = vol_up_val_sz;
+                ir_btn_buf = vol_up_val;
+
+                ir_btn_to_write_next = IR_BUTTON_VOL_DOWN;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_VOL_DOWN)
+            {
+                ir_btn_len = vol_down_val_sz;
+                ir_btn_buf = vol_down_val;
+
+                ir_btn_to_write_next = IR_BUTTON_POWER;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_POWER)
+            {
+                ir_btn_len = pow_val_sz;
+                ir_btn_buf = pow_val;
+
+                ir_btn_to_write_next = IR_BUTTON_MUTE;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_MUTE)
+            {
+                ir_btn_len = mute_val_sz;
+                ir_btn_buf = mute_val;
+
+                ir_btn_to_write_next = IR_BUTTON_INPUT;
+            }
+            if (ir_btn_to_write_next == IR_BUTTON_INPUT)
+            {
+                ir_btn_len = input_val_sz;
+                ir_btn_buf = input_val;
+
+                ir_btn_to_write_next = IR_BUTTON_FINISH_WRITING;
+            }
+
+            esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, ir_btn_len, ir_btn_buf, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+            if (write_success_status != ESP_OK)
+            {
+                ESP_LOGE(GATTC_TAG,
+                        "Failed to initiate write to IR config characteristic (handle: 0x%04x). "
+                        "esp_ble_gattc_write_char() returned 0x%x (%s). Possible causes: invalid connection, "
+                        "write not permitted, or GATT busy.",
+                        ir_config_char.char_handle,
+                        write_success_status,
+                        esp_err_to_name(write_success_status));
+                
+                ir_write_result = ESP_FAIL;
+                // Reset the in-progress flag before returning
+                if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY))
+                {
+                    ir_write_in_progress = false;
+                    xSemaphoreGive(ir_write_in_progress_mtx);
+                }
+                else
+                {
+                    ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex while resetting ir_write_in_progress");
+                    ir_write_in_progress = false;
+                }
+            }
+
+            break;
+        }
+
         break;
     }
 
@@ -481,6 +662,13 @@ esp_err_t set_target_device_addr(esp_bd_addr_t target_addr)
 
 esp_err_t handle_connection()
 {
+    if (ir_write_in_progress_mtx == NULL) {
+        ir_write_in_progress_mtx = xSemaphoreCreateMutex();
+        if (ir_write_in_progress_mtx == NULL) {
+            ESP_LOGE(TASK_SYNC_TAG, "Failed to create mutex");
+        }
+    }
+
     esp_err_t ret = esp_ble_gap_start_scanning(0);
     if (ret != ESP_OK) {
         ESP_LOGE("BLE_SCAN", "Failed to start scanning: %s", esp_err_to_name(ret));
@@ -489,7 +677,173 @@ esp_err_t handle_connection()
     return ret;
 }
 
-void set_remote_connection()
-{
 
+static esp_err_t set_ir_code(uint8_t **buffer, uint8_t *size_out, const uint8_t *value, uint8_t size)
+{
+    if (value == NULL || size == 0) {
+        ESP_LOGE(IR_CODE_SET_TAG, "set_ir_code: Invalid argument (value=NULL or size=0)");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (*buffer != NULL) {
+        free(*buffer);
+        *buffer = NULL;
+        *size_out = 0;
+    }
+
+    *buffer = malloc(size);
+    if (*buffer == NULL) {
+        ESP_LOGE(IR_CODE_SET_TAG, "set_ir_code: Memory allocation failed");
+        return ESP_ERR_NO_MEM;
+    }
+
+    memcpy(*buffer, value, size);
+    *size_out = size;
+
+    return ESP_OK;
+}
+
+esp_err_t set_vol_up_ir_code(const uint8_t *value, uint8_t size)
+{
+    return set_ir_code(&vol_up_val, &vol_up_val_sz, value, size);
+}
+
+esp_err_t set_vol_down_ir_code(const uint8_t *value, uint8_t size)
+{
+    return set_ir_code(&vol_down_val, &vol_down_val_sz, value, size);
+}
+
+esp_err_t set_pow_ir_code(const uint8_t *value, uint8_t size)
+{
+    return set_ir_code(&pow_val, &pow_val_sz, value, size);
+}
+
+esp_err_t set_mute_ir_code(const uint8_t *value, uint8_t size)
+{
+    return set_ir_code(&mute_val, &mute_val_sz, value, size);
+}
+
+esp_err_t set_input_ir_code(const uint8_t *value, uint8_t size)
+{
+    return set_ir_code(&input_val, &input_val_sz, value, size);
+}
+
+
+// This is a blocking call
+esp_err_t enable_ir_buttons()
+{
+    if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY)) {
+        if (ir_write_in_progress) {
+            ESP_LOGE(TASK_SYNC_TAG, "IR write already in progress");
+            xSemaphoreGive(ir_write_in_progress_mtx);
+            return ESP_ERR_INVALID_STATE;  // or a custom error if desired
+        }
+
+        ir_write_in_progress = true;
+        xSemaphoreGive(ir_write_in_progress_mtx);
+    } else {
+        ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex in enable_ir_buttons()");
+        return ESP_FAIL;
+    }
+
+    ir_btn_to_write_next = IR_BUTTON_VOL_UP;
+    ir_write_result = ESP_OK;
+    esp_err_t write_success_status = esp_ble_gattc_write_char(gl_gattc_if, conn_id, ir_config_char.char_handle, sizeof(IR_CONFIG_ENABLE_VAL), &IR_CONFIG_ENABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+    if (write_success_status != ESP_OK)
+    {
+        ESP_LOGE(GATTC_TAG,
+            "Failed to initiate write to IR config characteristic (handle: 0x%04x). "
+            "esp_ble_gattc_write_char() returned 0x%x (%s). Possible causes: invalid connection, "
+            "write not permitted, or GATT busy.",
+            ir_config_char.char_handle,
+            write_success_status,
+            esp_err_to_name(write_success_status));
+
+        // Reset the in-progress flag before returning
+        if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY)) {
+            ir_write_in_progress = false;
+            xSemaphoreGive(ir_write_in_progress_mtx);
+        } else {
+            ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex while resetting ir_write_in_progress");
+            ir_write_in_progress = false;
+        }
+
+        return write_success_status;
+    }
+
+    while (true) {
+        if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY)) {
+            if (!ir_write_in_progress) {
+                xSemaphoreGive(ir_write_in_progress_mtx);
+                break;  // Done waiting
+            }
+            xSemaphoreGive(ir_write_in_progress_mtx);
+        }
+
+        // Wait a bit before trying again to avoid hogging the CPU
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    return ir_write_result;
+}
+
+
+
+
+// This is a blocking call
+esp_err_t disable_ir_buttons()
+{
+    if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY)) {
+        if (ir_write_in_progress) {
+            ESP_LOGE(TASK_SYNC_TAG, "IR write already in progress");
+            xSemaphoreGive(ir_write_in_progress_mtx);
+            return ESP_ERR_INVALID_STATE;  // or a custom error if desired
+        }
+
+        ir_write_in_progress = true;
+        xSemaphoreGive(ir_write_in_progress_mtx);
+    } else {
+        ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex in enable_ir_buttons()");
+        return ESP_FAIL;
+    }
+
+    ir_btn_to_write_next = IR_BUTTON_FINISH_WRITING;
+    ir_write_result = ESP_OK;
+    esp_err_t write_success_status = esp_ble_gattc_write_char(gl_gattc_if, conn_id, ir_config_char.char_handle, sizeof(IR_CONFIG_ENABLE_VAL), &IR_CONFIG_ENABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+    if (write_success_status != ESP_OK)
+    {
+        ESP_LOGE(GATTC_TAG,
+            "Failed to initiate write to IR config characteristic (handle: 0x%04x). "
+            "esp_ble_gattc_write_char() returned 0x%x (%s). Possible causes: invalid connection, "
+            "write not permitted, or GATT busy.",
+            ir_config_char.char_handle,
+            write_success_status,
+            esp_err_to_name(write_success_status));
+
+        // Reset the in-progress flag before returning
+        if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY)) {
+            ir_write_in_progress = false;
+            xSemaphoreGive(ir_write_in_progress_mtx);
+        } else {
+            ESP_LOGE(TASK_SYNC_TAG, "Failed to acquire mutex while resetting ir_write_in_progress");
+            ir_write_in_progress = false;
+        }
+
+        return write_success_status;
+    }
+
+    while (true) {
+        if (xSemaphoreTake(ir_write_in_progress_mtx, portMAX_DELAY)) {
+            if (!ir_write_in_progress) {
+                xSemaphoreGive(ir_write_in_progress_mtx);
+                break;  // Done waiting
+            }
+            xSemaphoreGive(ir_write_in_progress_mtx);
+        }
+
+        // Wait a bit before trying again to avoid hogging the CPU
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    return ir_write_result;
 }

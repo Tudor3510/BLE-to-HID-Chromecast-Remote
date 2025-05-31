@@ -11,6 +11,7 @@
     "IDF_TARGET": "esp32s3"
   },
   "files.associations": {
-    "hid_device.h": "c"
+    "hid_device.h": "c",
+    "cstdint": "c"
   }
 }
