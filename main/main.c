@@ -36,6 +36,8 @@
 #define HID_ITF_PROTOCOL_CONSUMER 2
 
 
+static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
+
 
 typedef struct {
     uint8_t report_id;
@@ -182,12 +184,10 @@ void app_main(void)
     
 
     register_ble_button_callback(remote_button_cb);
+    set_target_device_addr(target_device_addr);
     register_ble_callbacks(get_ble_gap_callback(), get_ble_gattc_callback());
 
     // Start scanning
-    ret = esp_ble_gap_start_scanning(0);
-    if (ret != ESP_OK) {
-        ESP_LOGE("BLE_SCAN", "Failed to start scanning: %s", esp_err_to_name(ret));
-    }
+    handle_connection();
 
 }

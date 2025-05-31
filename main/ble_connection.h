@@ -35,24 +35,42 @@
 
 #define GATTC_TAG "GATTC_CLIENT"
 
-
 // For convenience, define the numeric code for connectable directed adv:
 #define ADV_DIRECT_IND 0x01
 
-static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
-static uint16_t gl_gattc_if = ESP_GATT_IF_NONE;
-static uint16_t conn_id = 0;
+#define HID_SERV_UUID32 0x1812
+#define HID_REPORT_CHAR 0x2A4D
 
-static uint8_t target_ir_uuid[ESP_UUID_LEN_128] = {
+static const uint8_t TARGET_IR_SERV_UUID[ESP_UUID_LEN_128] = {
     0x64, 0xb6, 0x17, 0xf6, 0x01, 0xaf, 0x7d, 0xbc,
     0x05, 0x4f, 0x21, 0x5a, 0xc0, 0xbf, 0x43, 0xd3
 };
+#define IR_CONFIG_CHAR_INDEX 0
+#define IR_BUTTON_CHAR_INDEX 1
+#define IR_CODE_CHAR_INDEX 2
 
 
-static esp_gattc_char_elem_t charact;
-static esp_gattc_char_elem_t enable_ir_writing;
-static esp_gattc_char_elem_t button_to_write;
-static esp_gattc_char_elem_t code_to_write;
+static const uint8_t IR_CONFIG_ENABLE_VAL = 0x01;
+static const uint8_t IR_CONFIG_DISABLE_VAL = 0x00;
+
+static const uint8_t VOL_UP_BUTTON[2] = {0x00, 0x18};
+static const uint8_t VOL_DOWN_BUTTON[2] = {0x00, 0x19};
+static const uint8_t POW_BUTTON[2] = {0x00, 0x1a};  // Hex value to write
+static const uint8_t MUTE_BUTTON[2] = {0x00, 0xa4};
+static const uint8_t INPUT_BUTTON[2] = {0x00, 0xb2};
+
+static esp_bd_addr_t target_device_addr;
+static uint16_t gl_gattc_if = ESP_GATT_IF_NONE;
+static uint16_t conn_id = 0;
+
+static esp_gattc_char_elem_t hid_report_char;
+static esp_gattc_char_elem_t ir_config_char;
+static esp_gattc_char_elem_t ir_button_char;
+static esp_gattc_char_elem_t ir_code_char;
+
+
+
+        
 
 
 static esp_ble_scan_params_t ble_scan_params = {
@@ -98,9 +116,7 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
         {
             if (memcmp(param->scan_rst.bda, target_device_addr, sizeof(esp_bd_addr_t)) == 0) //&& param->scan_rst.ble_evt_type == ADV_DIRECT_IND)
             {
-                ESP_LOGI(GATTC_TAG, "Found target device. Address: %02x:%02x:%02x:%02x:%02x:%02x",
-                        param->scan_rst.bda[0], param->scan_rst.bda[1], param->scan_rst.bda[2],
-                        param->scan_rst.bda[3], param->scan_rst.bda[4], param->scan_rst.bda[5]);
+                
 
                 esp_ble_gap_stop_scanning();
 
@@ -144,12 +160,14 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         if (param->reg.status == ESP_GATT_OK)
         {
             gl_gattc_if = gattc_if;
-            ESP_LOGI(GATTC_TAG, "REG_EVT successful");
             esp_ble_gap_set_scan_params(&ble_scan_params);
+        }
+        else
+        {
+            ESP_LOGE(GATTC_TAG, "REG_EVT failed, status: 0x%X", param->reg.status);
         }
         break;
     case ESP_GATTC_CONNECT_EVT:
-        ESP_LOGI(GATTC_TAG, "Am intraaaat aici !!!!");
         conn_id = p_data->connect.conn_id;
         ESP_LOGI(GATTC_TAG, "ESP_GATTC_CONNECT_EVT conn_id %d, if %d", conn_id, gattc_if);
         esp_ble_gattc_send_mtu_req(gattc_if, conn_id);
@@ -181,13 +199,9 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
 
         break;
     case ESP_GATTC_SEARCH_RES_EVT:
-        // Look for specific services, like a known UUID
-        ESP_LOGI(GATTC_TAG, "Service found: %lx", (unsigned long)param->search_res.srvc_id.uuid.uuid.uuid32);
-
-
-        
+        // Look for specific services, like a known UUID        
         if (param->search_res.srvc_id.uuid.len == ESP_UUID_LEN_128 &&
-            memcmp(param->search_res.srvc_id.uuid.uuid.uuid128, target_ir_uuid, ESP_UUID_LEN_128) == 0) {
+            memcmp(param->search_res.srvc_id.uuid.uuid.uuid128, TARGET_IR_SERV_UUID, ESP_UUID_LEN_128) == 0) {
             ESP_LOGI(GATTC_TAG, "Target ir service found!");
             // Save service handle or take action
 
@@ -200,12 +214,12 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             esp_gattc_char_elem_t *char_elem_result = (esp_gattc_char_elem_t *)malloc(sizeof(esp_gattc_char_elem_t) * count);
             esp_gatt_status_t status = esp_ble_gattc_get_all_char(gattc_if, p_data->connect.conn_id, param->search_res.start_handle, param->search_res.end_handle, char_elem_result, &count, 0);
 
-            enable_ir_writing = char_elem_result[0];
-            button_to_write = char_elem_result[1];
-            code_to_write = char_elem_result[2];
+            ir_config_char = char_elem_result[IR_CONFIG_CHAR_INDEX];
+            ir_button_char = char_elem_result[IR_BUTTON_CHAR_INDEX];
+            ir_code_char = char_elem_result[IR_CODE_CHAR_INDEX];
         }
 
-        if (param->search_res.srvc_id.uuid.uuid.uuid32 == 0x1812)
+        if (param->search_res.srvc_id.uuid.uuid.uuid32 == HID_SERV_UUID32)
         {
 
             uint16_t count = 0;
@@ -228,22 +242,20 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
 
             for (int i = 0; i < count; i++)
             {
-                ESP_LOGI(GATTC_TAG, "Characteristic UUID: %x, properties: %x", char_elem_result[i].uuid.uuid.uuid16, char_elem_result[i].properties);
-                ESP_LOGI(GATTC_TAG, "Characteristic HANDLE: %x", char_elem_result[i].char_handle);
+                if (char_elem_result[i].uuid.uuid.uuid32 == HID_REPORT_CHAR)
+                {
+                    ESP_LOGI(GATTC_TAG, "-----Found the correct UUID for HID: 0x00%x", char_elem_result[i].char_handle);
+                    hid_report_char = char_elem_result[i];
+                }
             }
 
-            if (char_elem_result[4].uuid.uuid.uuid32 == 0x2A4D)
-            {
-                ESP_LOGI(GATTC_TAG, "-----Found the correct UUID for HID: 0x00%x", char_elem_result[4].char_handle);
-                charact = char_elem_result[4];
-            }
         }
 
         break;
     case ESP_GATTC_SEARCH_CMPL_EVT:
         // After services are discovered, search for the characteristic you're interested in
         // esp_ble_gattc_get_characteristic(gattc_if, param->search_cmpl.conn_id, NULL, NULL);
-        esp_err_t notify_enabled_status = esp_ble_gattc_register_for_notify(gattc_if, target_device_addr, charact.char_handle);
+        esp_err_t notify_enabled_status = esp_ble_gattc_register_for_notify(gattc_if, target_device_addr, hid_report_char.char_handle);
         if (notify_enabled_status != ESP_OK)
         {
             ESP_LOGE(GATTC_TAG, "Failed to register for notifications, error code: %d", notify_enabled_status);
@@ -272,31 +284,24 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             ESP_LOGE(GATTC_TAG, "Failed to register for notification, status = 0x%x", p_data->reg_for_notify.status);
         }
 
-        uint8_t en_ir_writing_value[1] = {0x01}; // Enable notification
-        uint8_t ds_ir_writing_value[1] = {0x00};
-
-        uint8_t vol_up_button[2] = {0x00, 0x18};
+        
         uint8_t vol_up_val[] = {
             0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
         };
 
 
-        uint8_t vol_down_button[2] = {0x00, 0x19};
         uint8_t vol_down_val[] = {
             0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
         };
 
-        uint8_t pow_button[2] = {0x00, 0x1a};  // Hex value to write
         uint8_t pow_val[] = {
             0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
         };
 
-        uint8_t mute_button[2] = {0x00, 0xa4};
         uint8_t mute_val[] = {
             0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
         };
 
-        uint8_t input_button[2] = {0x00, 0xb2};
         uint8_t input_val[] = {
             0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
         };
@@ -305,17 +310,17 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         ESP_LOGI(GATTC_TAG, "Trying to activate IR service on device");
 
 
-        // esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, enable_ir_writing.char_handle, sizeof(en_ir_writing_value), en_ir_writing_value, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Serviciul IR se asteapta sa scriem");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Serviciul IR NU se asteapta sa scriem din cauze unei erori");
-        // }
+        esp_err_t write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(&IR_CONFIG_ENABLE_VAL), &IR_CONFIG_ENABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Serviciul IR se asteapta sa scriem");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Serviciul IR NU se asteapta sa scriem din cauze unei erori");
+        }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(vol_up_button), vol_up_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_UP_BUTTON), VOL_UP_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Volume up button se asteapta sa primeasca valoarea");
@@ -324,7 +329,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         //     ESP_LOGI(GATTC_TAG, "Volume up button NU se asteapta sa primeasca valoarea din cauze unei erori");
         // }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(vol_up_val), vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(vol_up_val), vol_up_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Volume up button a primit valoarea");
@@ -334,7 +339,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(vol_down_button), vol_down_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(VOL_DOWN_BUTTON), VOL_DOWN_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Volume down button se asteapta sa primeasca valoarea");
@@ -343,7 +348,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         //     ESP_LOGI(GATTC_TAG, "Volume down button NU se asteapta sa primeasca valoarea din cauze unei erori");
         // }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(vol_down_val), vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(vol_down_val), vol_down_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Volume down button a primit valoarea");
@@ -353,7 +358,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // }
         
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(pow_button), pow_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(POW_BUTTON), POW_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Power button se asteapta sa primeasca valoarea");
@@ -362,7 +367,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         //     ESP_LOGI(GATTC_TAG, "Power button NU se asteapta sa primeasca valoarea din cauze unei erori");
         // }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(pow_val), pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(pow_val), pow_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Power button a primit valoarea");
@@ -372,7 +377,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(mute_button), mute_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(MUTE_BUTTON), MUTE_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Mute button se asteapta sa primeasca valoarea");
@@ -381,7 +386,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         //     ESP_LOGI(GATTC_TAG, "Mute button NU se asteapta sa primeasca valoarea din cauze unei erori");
         // }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(mute_val), mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(mute_val), mute_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Mute button a primit valoarea");
@@ -391,7 +396,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, button_to_write.char_handle, sizeof(input_button), input_button, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_button_char.char_handle, sizeof(INPUT_BUTTON), INPUT_BUTTON, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Input button se asteapta sa primeasca valoarea");
@@ -400,7 +405,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         //     ESP_LOGI(GATTC_TAG, "Input button NU se asteapta sa primeasca valoarea din cauze unei erori");
         // }
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, code_to_write.char_handle, sizeof(input_val), input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_code_char.char_handle, sizeof(input_val), input_val, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
         // if (write_success_status == ESP_OK)
         // {
         //     ESP_LOGI(GATTC_TAG, "Input button a primit valoarea");
@@ -410,14 +415,14 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // }
 
 
-        // write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, enable_ir_writing.char_handle, sizeof(ds_ir_writing_value), ds_ir_writing_value, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
-        // if (write_success_status == ESP_OK)
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Serviciul IR a scris tot");
-        // } else
-        // {
-        //     ESP_LOGI(GATTC_TAG, "Serviciul IR NU a scris tot din cauze unei erori");
-        // }
+        write_success_status = esp_ble_gattc_write_char(gattc_if, conn_id, ir_config_char.char_handle, sizeof(&IR_CONFIG_DISABLE_VAL), &IR_CONFIG_DISABLE_VAL, ESP_GATT_WRITE_TYPE_RSP, ESP_GATT_AUTH_REQ_NONE);
+        if (write_success_status == ESP_OK)
+        {
+            ESP_LOGI(GATTC_TAG, "Serviciul IR a scris tot");
+        } else
+        {
+            ESP_LOGI(GATTC_TAG, "Serviciul IR NU a scris tot din cauze unei erori");
+        }
 
         break;
     }
@@ -436,6 +441,9 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         {
             ESP_LOGE(GATTC_TAG, "---Write failed with status 0x%X", p_data->write.status);
         }
+
+
+        
         break;
     }
 
@@ -457,4 +465,31 @@ esp_gap_ble_cb_t get_ble_gap_callback()
 esp_gattc_cb_t get_ble_gattc_callback()
 {
     return esp_gattc_cb;
+}
+
+esp_err_t set_target_device_addr(esp_bd_addr_t target_addr)
+{
+    memcpy(target_device_addr, target_addr, sizeof(esp_bd_addr_t));
+
+    esp_err_t err = esp_ble_gap_update_whitelist(true, target_device_addr, BLE_ADDR_TYPE_PUBLIC);
+    if (err != ESP_OK) {
+        ESP_LOGE("BLE", "Failed to add device to allow list: %s", esp_err_to_name(err));
+    }
+
+    return err;
+}
+
+esp_err_t handle_connection()
+{
+    esp_err_t ret = esp_ble_gap_start_scanning(0);
+    if (ret != ESP_OK) {
+        ESP_LOGE("BLE_SCAN", "Failed to start scanning: %s", esp_err_to_name(ret));
+    }
+
+    return ret;
+}
+
+void set_remote_connection()
+{
+
 }
