@@ -91,10 +91,20 @@ void usb_hid_kbd_init()
 
 bool send_hid_report(hid_report_payload_t* btn_report)
 {
-    if (!tud_hid_report(btn_report->report_id, btn_report->keycode, btn_report->length)) {
-        printf("Failed to send HID report: report_id=%u, length=%u\n",
-            btn_report->report_id, btn_report->length);
+    while (!tud_hid_ready()) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
 
+    vTaskDelay(pdMS_TO_TICKS(1));
+
+    if (!tud_hid_report(btn_report->report_id, btn_report->keycode, btn_report->length)) {
+        printf("Failed to send HID report: report_id=%u, length=%u, keycodes=[",
+            btn_report->report_id, btn_report->length);
+        for (int i = 0; i < 8; ++i) {
+            printf("%02X", btn_report->keycode[i]);
+            if (i < 7) printf(" ");
+        }
+        printf("]\n");
         return false;
     }
 
