@@ -28,11 +28,11 @@ typedef struct {
 
 const char* hid_string_descriptor[5] = {
     // array of pointer to string descriptors
-    (char[]){0x09, 0x04},  // 0: is supported language is English (0x0409)
-    "TinyUSB",             // 1: Manufacturer
-    "TinyUSB Device",      // 2: Product
-    "123456",              // 3: Serials, should use chip ID
-    "Chromecast HID interface",  // 4: HID
+    (char[]){0x09, 0x04},                       // 0: is supported language is English (0x0409)
+    "TinyUSB",                                  // 1: Manufacturer
+    "TinyUSB Device",                           // 2: Product
+    "DCDA0C29C9FC",                             // 3: Serials, should use chip ID
+    "Chromecast Remote HID interface",          // 4: HID
 };
 
 const uint8_t hid_report_descriptor[] = {

@@ -298,7 +298,7 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
     {
         if (param->notify.is_notify)
         {
-            ESP_LOGI(GATTC_TAG, "Notification received for handle: %d", param->notify.handle);
+            // ESP_LOGI(GATTC_TAG, "Notification received for handle: %d", param->notify.handle);
 
             ble_button_cb(param->notify.value[0]);
         }
