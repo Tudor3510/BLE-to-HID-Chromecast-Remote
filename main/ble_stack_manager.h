@@ -5,7 +5,8 @@
 #include "esp_mac.h"
 #include "esp_gattc_api.h"
 #include "esp_gap_ble_api.h"   // For esp_ble_gap_set_security_param(), esp_ble_auth_req_t, and related constants
-
+#include "esp_log.h"
+#include "esp_gatt_common_api.h"
 
 
 #define PROFILE_A_APP_ID 0
