@@ -27,6 +27,8 @@
 
 
 #define REMOTE_RELEASE_KEY 0x00
+#define USB_RELEASE_KEYBOARD_KEY 0x00
+#define USB_RELEASE_CONSUMER_KEY 0x02
 
 
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
@@ -87,19 +89,7 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
-
-
-    ESP_LOGI(TINY_USB_TAG, "USB initialization");
-    const tinyusb_config_t tusb_cfg = {
-        .device_descriptor = NULL,
-        .string_descriptor = hid_string_descriptor,
-        .string_descriptor_count = sizeof(hid_string_descriptor) / sizeof(hid_string_descriptor[0]),
-        .external_phy = false,
-        .configuration_descriptor = hid_configuration_descriptor,
-    };
-
-    ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
-    ESP_LOGI(TINY_USB_TAG, "USB initialization DONE");
+    
 
     release_button_queue = xQueueCreate(10, sizeof(hid_report_mapper));
     if (release_button_queue == NULL) {
@@ -108,7 +98,7 @@ void app_main(void)
     }
 
     ble_stack_init();
-    
+    usb_hid_kbd_init();    
 
     register_ble_button_callback(remote_button_cb);
     set_target_device_addr(target_device_addr);
@@ -123,15 +113,4 @@ void app_main(void)
 
     // Start scanning
     handle_connection();
-
-
-
-
-
-    vTaskDelay(pdMS_TO_TICKS(15000));
-    
-    esp_err_t err = disable_ir_buttons();
-    if (err != ESP_OK) {
-        ESP_LOGW("APP", "Failed to disable IR buttons: %s", esp_err_to_name(err));
-    }
 }
