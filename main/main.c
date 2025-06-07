@@ -27,8 +27,6 @@
 
 
 #define REMOTE_RELEASE_KEY 0x00
-#define USB_RELEASE_KEYBOARD_KEY 0x00
-#define USB_RELEASE_CONSUMER_KEY 0x02
 
 
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
@@ -53,27 +51,45 @@ static const uint8_t INPUT_VAL[] = {
     0x03, 0x21, 0x01, 0x7c, 0x00, 0x22, 0x00, 0x02, 0x01, 0x57, 0x00, 0xab, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x16, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x00, 0x41, 0x00, 0x16, 0x05, 0xf5, 0x01, 0x57, 0x00, 0x56, 0x00, 0x16, 0x0e, 0x60
 };
 
+static const hid_report_payload_t remote_map_windows_hid[18] = {
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD & HID_ITF_PROTOCOL_CONSUMER, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},         // pos 00: release for keyboard
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_A, 0, 0, 0, 0, 0}, .length = 8},                             // pos 01: power
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},                                     // pos 02: release for consumer
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_UP, 0, 0, 0, 0, 0}, .length = 8},                      // pos 03: up
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_DOWN, 0, 0, 0, 0, 0}, .length = 8},                    // pos 04: down
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_LEFT, 0, 0, 0, 0, 0}, .length = 8},                    // pos 05: left
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ARROW_RIGHT, 0, 0, 0, 0, 0}, .length = 8},                   // pos 06: right
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ENTER, 0, 0, 0, 0, 0}, .length = 8},                         // pos 07: enter
+    {.report_id = HID_ITF_PROTOCOL_CONSUMER, .keycode = {HID_USAGE_CONSUMER_MUTE, 0, 0, 0, 0, 0, 0, 0}, .length = 2},               // pos 08: mute
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},                                     // pos 09: 
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_GUI_LEFT, 0, 0, 0, 0, 0}, .length = 8},                      // pos 10: home
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_ESCAPE, 0, 0, 0, 0, 0}, .length = 8},                        // pos 11: back
+    {.report_id = HID_ITF_PROTOCOL_CONSUMER, .keycode = {HID_USAGE_CONSUMER_VOLUME_INCREMENT, 0, 0, 0, 0, 0, 0, 0}, .length = 2},   // pos 12: vol_up
+    {.report_id = HID_ITF_PROTOCOL_CONSUMER, .keycode = {HID_USAGE_CONSUMER_VOLUME_DECREMENT, 0, 0, 0, 0, 0, 0, 0}, .length = 2},   // pos 13: vol_down
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_S, 0, 0, 0, 0, 0}, .length = 8},                             // pos 14: YouTube
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_D, 0, 0, 0, 0, 0}, .length = 8},                             // pos 15: Netflix
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, 0, 0, 0, 0, 0, 0}, .length = 8},                                     // pos 16: 
+    {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_F, 0, 0, 0, 0, 0}, .length = 8},                             // pos 17: input
+};
+
+static QueueHandle_t release_button_queue;
 
 
 void remote_button_cb(uint8_t value)
 {
-    ESP_LOGI(TINY_USB_TAG, "Sending Keyboard report");
-
     if (value == REMOTE_RELEASE_KEY)
     {
-        ESP_LOGI(TINY_USB_TAG, "Release Key");
-
-        hid_report_mapper hid_report_mapper_copy;
-        xQueueReceive(release_button_queue, &hid_report_mapper_copy, 0);
-        tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
+        hid_report_payload_t btn_report_copy;
+        xQueueReceive(release_button_queue, &btn_report_copy, 0);
+        send_hid_report(&btn_report_copy);
     }
     else
     {
-        hid_report_mapper hid_report_mapper_copy = remote_map_windows_hid[value];
-        tud_hid_report(hid_report_mapper_copy.report_id, hid_report_mapper_copy.keycode, hid_report_mapper_copy.length);
+        hid_report_payload_t btn_report_copy = remote_map_windows_hid[value];
+        send_hid_report(&btn_report_copy);
 
-        hid_report_mapper_copy.keycode[0] = 0, hid_report_mapper_copy.keycode[2] = 0;
-        xQueueSend(release_button_queue, &hid_report_mapper_copy, 0);
+        btn_report_copy.keycode[0] = 0, btn_report_copy.keycode[2] = 0;
+        xQueueSend(release_button_queue, &btn_report_copy, 0);
     }
 }
 
@@ -91,7 +107,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     
 
-    release_button_queue = xQueueCreate(10, sizeof(hid_report_mapper));
+    release_button_queue = xQueueCreate(10, sizeof(hid_report_payload_t));
     if (release_button_queue == NULL) {
         ESP_LOGE(TINY_USB_TAG, "Release button queue was not created successfully");
         return;
