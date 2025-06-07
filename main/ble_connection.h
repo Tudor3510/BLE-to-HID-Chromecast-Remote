@@ -164,11 +164,6 @@ static void esp_gap_cb(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param_t *par
     case ESP_GAP_BLE_AUTH_CMPL_EVT:
         if (param->ble_security.auth_cmpl.success)
         {
-            ESP_LOGI(GATTC_TAG, "Pairing successful");
-
-            // Print the values of gl_gattc_if and conn_id before calling service discovery
-            ESP_LOGI(GATTC_TAG, "gl_gattc_if: %d, conn_id: %d", gl_gattc_if, conn_id);
-
             esp_ble_gattc_search_service(gl_gattc_if, conn_id, NULL);
         }
         else
@@ -233,14 +228,11 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
         // Look for specific services, like a known UUID        
         if (param->search_res.srvc_id.uuid.len == ESP_UUID_LEN_128 &&
             memcmp(param->search_res.srvc_id.uuid.uuid.uuid128, TARGET_IR_SERV_UUID, ESP_UUID_LEN_128) == 0) {
-            ESP_LOGI(GATTC_TAG, "Target ir service found!");
-            // Save service handle or take action
-
+            // Save service handle
 
             uint16_t count = 0;
 
             esp_ble_gattc_get_attr_count(gattc_if, p_data->connect.conn_id, ESP_GATT_DB_CHARACTERISTIC, param->search_res.start_handle, param->search_res.end_handle, 0, &count);
-            ESP_LOGI(GATTC_TAG, "Found %d characteristics for ir service", count);
 
             esp_gattc_char_elem_t *char_elem_result = (esp_gattc_char_elem_t *)malloc(sizeof(esp_gattc_char_elem_t) * count);
             esp_gatt_status_t status = esp_ble_gattc_get_all_char(gattc_if, p_data->connect.conn_id, param->search_res.start_handle, param->search_res.end_handle, char_elem_result, &count, 0);
@@ -256,17 +248,11 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             uint16_t count = 0;
 
             esp_ble_gattc_get_attr_count(gattc_if, p_data->connect.conn_id, ESP_GATT_DB_CHARACTERISTIC, param->search_res.start_handle, param->search_res.end_handle, 0, &count);
-            ESP_LOGI(GATTC_TAG, "Found %d characteristics", count);
 
             esp_gattc_char_elem_t *char_elem_result = (esp_gattc_char_elem_t *)malloc(sizeof(esp_gattc_char_elem_t) * count);
             esp_gatt_status_t status = esp_ble_gattc_get_all_char(gattc_if, p_data->connect.conn_id, param->search_res.start_handle, param->search_res.end_handle, char_elem_result, &count, 0);
 
-            if (status == ESP_GATT_OK)
-            {
-                ESP_LOGI(GATTC_TAG, "Successfully retrieved all characteristics.");
-                // Continue with processing the characteristics
-            }
-            else
+            if (status != ESP_GATT_OK)
             {
                 ESP_LOGE(GATTC_TAG, "Failed to retrieve characteristics, error code: %d", status);
             }
@@ -275,7 +261,6 @@ static void esp_gattc_cb(esp_gattc_cb_event_t event, esp_gatt_if_t gattc_if, esp
             {
                 if (char_elem_result[i].uuid.uuid.uuid32 == HID_REPORT_CHAR)
                 {
-                    ESP_LOGI(GATTC_TAG, "-----Found the correct UUID for HID: 0x00%x", char_elem_result[i].char_handle);
                     hid_report_char = char_elem_result[i];
                 }
             }
