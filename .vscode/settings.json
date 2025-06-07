@@ -12,6 +12,7 @@
   },
   "files.associations": {
     "hid_device.h": "c",
-    "cstdint": "c"
+    "cstdint": "c",
+    "esp_bt_defs.h": "c"
   }
 }
