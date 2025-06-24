@@ -2,14 +2,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include "nvs_flash.h"
+#include "nvs.h"
 
 #include "ble_stack_manager.h"
 #include "ble_connection.h"
 #include "usb_hid_keyboard.h"
 
+#include "driver/gpio.h"
+
 
 #define REMOTE_RELEASE_KEY 0x00
 
+#define BOOT_BUTTON_GPIO GPIO_NUM_0
+#define NVS_NAMESPACE_NAME "app_storage"
+#define NVS_KEY "switch"
+#define NVS_TAG "NVS"
 
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
 
@@ -54,7 +61,8 @@ static const hid_report_payload_t remote_map_windows_hid[18] = {
     {.report_id = HID_ITF_PROTOCOL_KEYBOARD, .keycode = {0, 0, HID_KEY_F, 0, 0, 0, 0, 0}, .length = 8},                             // pos 17: input
 };
 
-static QueueHandle_t release_button_queue;
+static QueueHandle_t release_button_queue = NULL;
+static TaskHandle_t button_task_handle = NULL;
 
 
 void remote_button_cb(uint8_t value)
@@ -75,6 +83,55 @@ void remote_button_cb(uint8_t value)
     }
 }
 
+
+static void IRAM_ATTR boot_button_isr_handler(void* arg) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    vTaskNotifyGiveFromISR(button_task_handle, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+}
+
+
+// Monitoring task that only creates new tasks on press
+void button_monitor_task(void* arg) {
+    button_task_handle = xTaskGetCurrentTaskHandle();
+    if (button_task_handle == NULL) {
+        ESP_LOGE(TAG, "Failed to get current task handle!");
+    }
+
+    nvs_handle_t hndl;
+    esp_err_t ret = nvs_open(NVS_NAMESPACE_NAME, NVS_READWRITE, &hndl);
+    if (ret != ESP_OK) {
+        ESP_LOGE(NVS_TAG, "Error opening NVS handle!");
+    }
+
+    int8_t stored_value = 0;
+    ret = nvs_get_i8(hndl, NVS_KEY, &stored_value);
+    switch (ret) {
+        case ESP_OK:
+            break;
+        case ESP_ERR_NVS_NOT_FOUND:
+            ESP_LOGI(TAG, "Value not set yet");
+            break;
+        default:
+            ESP_LOGE(TAG, "Error reading: %s", esp_err_to_name(ret));
+    }
+
+    while (1) {
+        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  // Wait for notification
+
+        if (stored_value)
+            enable_ir_buttons();
+        else
+            disable_ir_buttons();
+            
+        stored_value = !stored_value;
+        ret = nvs_set_i8(hndl, NVS_KEY, stored_value);
+        if (ret != ESP_OK) 
+            ESP_LOGE(NVS_TAG, "Failed to set value in NVS! Error: %s", esp_err_to_name(ret));
+    }
+}
+
+
 void app_main(void)
 {
     esp_err_t ret;
@@ -88,6 +145,10 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
     
+    nvs_handle_t nvs_switch_handle;
+
+    ret = nvs_open(NVS_NAMESPACE_NAME, NVS_READWRITE, &nvs_switch_handle);
+    ESP_ERROR_CHECK(ret);
 
     release_button_queue = xQueueCreate(10, sizeof(hid_report_payload_t));
     if (release_button_queue == NULL) {
@@ -111,4 +172,15 @@ void app_main(void)
 
     // Start scanning
     handle_connection();
+
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    if (release_button_queue == NULL) {
+        ESP_LOGE(TINY_USB_TAG, "GPIO event queue was not created successfully");
+        return;
+    }
+
+    xTaskCreate(button_monitor_task, "button_monitor_task", 2048, NULL, 5, NULL);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(BOOT_BUTTON_GPIO, boot_button_isr_handler, NULL);
 }
