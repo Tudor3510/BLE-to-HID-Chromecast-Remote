@@ -98,7 +98,7 @@ static void IRAM_ATTR boot_button_isr_handler(void* arg) {
 void button_monitor_task(void* arg) {
     button_task_handle = xTaskGetCurrentTaskHandle();
     if (button_task_handle == NULL) {
-        ESP_LOGE(TAG, "Failed to get current task handle!");
+        ESP_LOGE(BUTTON_TAG, "Failed to get current task handle!");
         return;
     }
 
