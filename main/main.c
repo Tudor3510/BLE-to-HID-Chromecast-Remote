@@ -19,6 +19,7 @@
 #define NVS_TAG "NVS"
 
 #define BUTTON_TAG "BOOT_BUTTON"
+#define BUTTON_PRESS_INTERVAL_US 2000000
 
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
 
@@ -119,8 +120,15 @@ void button_monitor_task(void* arg) {
             ESP_LOGE(NVS_TAG, "Error reading: %s", esp_err_to_name(ret));
     }
 
+    int64_t last_processed_time = 0;
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  // Wait for notification
+
+        int64_t now = esp_timer_get_time();  // Get current time in microseconds
+        if (now - last_processed_time < BUTTON_PRESS_INTERVAL_US) {
+            ESP_LOGI(BUTTON_TAG, "Signal ignored: too soon after previous.");
+            continue;
+        }
 
         if (stored_value) {
             ret = enable_ir_buttons();
@@ -142,6 +150,8 @@ void button_monitor_task(void* arg) {
         ret = nvs_set_i8(hndl, NVS_KEY, stored_value);
         if (ret != ESP_OK) 
             ESP_LOGE(NVS_TAG, "Failed to set value in NVS! Error: %s", esp_err_to_name(ret));
+
+        last_processed_time = now;
     }
 }
 
