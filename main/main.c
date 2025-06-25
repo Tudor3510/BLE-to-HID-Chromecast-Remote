@@ -18,6 +18,8 @@
 #define NVS_KEY "switch"
 #define NVS_TAG "NVS"
 
+#define BUTTON_TAG "BOOT_BUTTON"
+
 static esp_bd_addr_t target_device_addr = {0xE4, 0xE1, 0x12, 0xDB, 0x65, 0x5F};
 
 static const uint8_t VOL_UP_VAL[] = {
@@ -108,21 +110,33 @@ void button_monitor_task(void* arg) {
     ret = nvs_get_i8(hndl, NVS_KEY, &stored_value);
     switch (ret) {
         case ESP_OK:
+            // ESP_LOGI(NVS_TAG, "Stored value: %d", stored_value);
             break;
         case ESP_ERR_NVS_NOT_FOUND:
-            ESP_LOGI(TAG, "Value not set yet");
+            ESP_LOGI(NVS_TAG, "Value not set yet");
             break;
         default:
-            ESP_LOGE(TAG, "Error reading: %s", esp_err_to_name(ret));
+            ESP_LOGE(NVS_TAG, "Error reading: %s", esp_err_to_name(ret));
     }
 
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);  // Wait for notification
 
-        if (stored_value)
-            enable_ir_buttons();
-        else
-            disable_ir_buttons();
+        if (stored_value) {
+            ret = enable_ir_buttons();
+            if (ret != ESP_OK) {
+                ESP_LOGE(BUTTON_TAG, "Failed to enable IR buttons: %s", esp_err_to_name(ret));
+            } else {
+                ESP_LOGI(BUTTON_TAG, "IR buttons enabled successfully.");
+            }
+        } else {
+            ret = disable_ir_buttons();
+            if (ret != ESP_OK) {
+                ESP_LOGE(BUTTON_TAG, "Failed to disable IR buttons: %s", esp_err_to_name(ret));
+            } else {
+                ESP_LOGI(BUTTON_TAG, "IR buttons disabled successfully.");
+            }
+        }
             
         stored_value = !stored_value;
         ret = nvs_set_i8(hndl, NVS_KEY, stored_value);
@@ -144,6 +158,16 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_NEGEDGE,
+        .mode = GPIO_MODE_INPUT,
+        .pin_bit_mask = (1ULL << BOOT_BUTTON_GPIO),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .pull_up_en = GPIO_PULLUP_ENABLE
+    };
+    gpio_config(&io_conf);
+
     
     nvs_handle_t nvs_switch_handle;
 
@@ -157,7 +181,7 @@ void app_main(void)
     }
 
     ble_stack_init();
-    usb_hid_kbd_init();    
+    usb_hid_kbd_init();
 
     register_ble_button_callback(remote_button_cb);
     set_target_device_addr(target_device_addr);
@@ -173,14 +197,9 @@ void app_main(void)
     // Start scanning
     handle_connection();
 
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    if (release_button_queue == NULL) {
-        ESP_LOGE(TINY_USB_TAG, "GPIO event queue was not created successfully");
-        return;
-    }
 
     xTaskCreate(button_monitor_task, "button_monitor_task", 2048, NULL, 5, NULL);
 
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(BOOT_BUTTON_GPIO, boot_button_isr_handler, NULL);
+    ESP_ERROR_CHECK(gpio_install_isr_service(0));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(BOOT_BUTTON_GPIO, boot_button_isr_handler, (void*) BOOT_BUTTON_GPIO));
 }
