@@ -99,6 +99,7 @@ void button_monitor_task(void* arg) {
     button_task_handle = xTaskGetCurrentTaskHandle();
     if (button_task_handle == NULL) {
         ESP_LOGE(TAG, "Failed to get current task handle!");
+        return;
     }
 
     nvs_handle_t hndl;
@@ -131,19 +132,11 @@ void button_monitor_task(void* arg) {
         }
 
         if (stored_value) {
-            ret = enable_ir_buttons();
-            if (ret != ESP_OK) {
+            if (enable_ir_buttons() != ESP_OK)
                 ESP_LOGE(BUTTON_TAG, "Failed to enable IR buttons: %s", esp_err_to_name(ret));
-            } else {
-                ESP_LOGI(BUTTON_TAG, "IR buttons enabled successfully.");
-            }
         } else {
-            ret = disable_ir_buttons();
-            if (ret != ESP_OK) {
+            if (disable_ir_buttons() != ESP_OK)
                 ESP_LOGE(BUTTON_TAG, "Failed to disable IR buttons: %s", esp_err_to_name(ret));
-            } else {
-                ESP_LOGI(BUTTON_TAG, "IR buttons disabled successfully.");
-            }
         }
             
         stored_value = !stored_value;
