@@ -201,7 +201,7 @@ void app_main(void)
     handle_connection();
 
 
-    xTaskCreate(button_monitor_task, "button_monitor_task", 2048, NULL, 5, NULL);
+    xTaskCreate(button_monitor_task, "button_monitor_task", 6144, NULL, 5, NULL);
 
     ESP_ERROR_CHECK(gpio_install_isr_service(0));
     ESP_ERROR_CHECK(gpio_isr_handler_add(BOOT_BUTTON_GPIO, boot_button_isr_handler, (void*) BOOT_BUTTON_GPIO));
