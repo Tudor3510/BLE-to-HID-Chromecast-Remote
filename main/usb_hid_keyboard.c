@@ -67,7 +67,7 @@ bool send_hid_report(hid_report_payload_t* btn_report)
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 
-    vTaskDelay(pdMS_TO_TICKS(1));
+    vTaskDelay(pdMS_TO_TICKS(30));
 
     if (!tud_hid_report(btn_report->report_id, btn_report->keycode, btn_report->length)) {
         printf("Failed to send HID report: report_id=%u, length=%u, keycodes=[",
