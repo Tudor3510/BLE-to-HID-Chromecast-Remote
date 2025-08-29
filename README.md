@@ -1,12 +1,12 @@
 # Firmware for an ESP32-S3-based dongle that bridges BLE input from the Chromecast Remote to USB HID output, enabling control of HID-compatible devices.
 
-### ✅ Firmware Version
+### Firmware Version
 
 This firmware is compiled using **ESP-IDF v5.3.1**. Ensure you have this version (or a compatible one) installed when compiling.
 
 ---
 
-### 🧲 Pairing the Chromecast Remote
+### Pairing the Chromecast Remote
 
 To pair the Chromecast Remote with the dongle:
 
@@ -21,7 +21,7 @@ To pair the Chromecast Remote with the dongle:
 
 ---
 
-### 📺 Using the IR Buttons with Your TV
+### Using the IR Buttons with Your TV
 
 To make the IR buttons on the Chromecast Remote control your TV:
 
@@ -35,7 +35,7 @@ To toggle between IR and USB HID mode, **press the "BOOT" button** on the dongle
 
 ---
 
-### 🎮 Customizing Button Mappings (USB HID)
+### Customizing Button Mappings (USB HID)
 
 To change how the Chromecast Remote buttons behave on the host device:
 
